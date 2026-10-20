@@ -232,3 +232,6 @@ The app follows the system theme. With a real platform theme (the KDE Flatpak ru
 - If something is missing a dialog lists exactly what (Python / WhisperX / PyTorch / torchaudio, ✓ or ✗) and offers **Install separately, just for Snapper** (venv + pip, pinned whisperx 3.8.6 / torch 2.8.0 / torchaudio 2.8.0, about 5 GB, needs 12 GB free, cleaned up completely on failure or cancel) or **Use my own installation…** (pick a Python; accepted only if complete), or Not now.
 - The backend now falls back to the CPU (int8) when PyTorch can't see a GPU. Inside the Flatpak only the Snapper-installed or a reachable user installation can be used.
 - Test overrides: `SNAPPER_ENGINE_PACKAGES`, `SNAPPER_ENGINE_REQUIRED`. Tests: `engine_test.py`.
+
+### Distribution decision
+- Snapper ships as a Flatpak bundle attached to **GitHub releases**, not through a store (no Flathub review). So the run-time WhisperX installer (with `--share=network`) stays as it is; a separate engine package is only worth revisiting if that changes. No Flathub packages exist for WhisperX, PyTorch, faster-whisper or CTranslate2 (checked); aTrain's Flathub manifest is a reference if we ever bundle one.
