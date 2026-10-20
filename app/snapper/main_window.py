@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox, QDialo
                                QSplitter, QTextEdit, QVBoxLayout, QWidget)
 
 from . import media
+from .progress import JobBars, ProxyBanner
 from .clips_panel import ClipsPanel
 from .editor import ClipEditor
 from .model import Clip, Project
@@ -72,7 +73,7 @@ class MainWindow(QMainWindow):
         self.player = Player(self)
         self.pending = Clip()          # the new clip being cut; tags stay set between clips
         self.jobs: list = []
-        self._job_state: dict[str, str] = {}
+        self._job_state: dict[str, Optional[float]] = {}   # running job -> fraction done (None = unknown)
         self._acc = Transcript()
         self.transcript_job: Optional[TranscriptJob] = None
         self._audio_job: Optional[media.FfmpegJob] = None
@@ -96,6 +97,8 @@ class MainWindow(QMainWindow):
         video_box = QWidget()
         vl = QVBoxLayout(video_box)
         vl.setContentsMargins(0, 0, 0, 0)
+        self.proxy_banner = ProxyBanner()
+        vl.addWidget(self.proxy_banner)
         vl.addWidget(self.video, 1)
         vl.addWidget(self.slider)
         controls = self._build_controls()
@@ -145,7 +148,7 @@ class MainWindow(QMainWindow):
             if state:
                 sp.restoreState(state)
 
-        self.status_jobs = QLabel()
+        self.status_jobs = JobBars()
         self.statusBar().addPermanentWidget(self.status_jobs)
         self._build_menu()
 
@@ -324,6 +327,7 @@ class MainWindow(QMainWindow):
             self._on_proxy = False
             if self.project.proxy_enabled and not self._proxy_job:
                 self._proxy_job = media.proxy_job(self.media_path, self.info.duration)
+                self.proxy_banner.generating(0.0)
                 self._run_job(self._proxy_job, "proxy", self._proxy_ready)
         for gone in media.prune_proxies(keep=pp):
             print(f"[cache] removed old proxy {gone}", flush=True)
@@ -349,6 +353,7 @@ class MainWindow(QMainWindow):
             job.kill()
             self._job_state.pop("proxy", None)
             self._refresh_job_label()
+            self.proxy_banner.clear()
         if on != self._on_proxy and (on or self._on_proxy):
             self._use_proxy_or_original()
 
@@ -409,7 +414,7 @@ class MainWindow(QMainWindow):
         if missing:
             job = media.SubtitleExtractJob(self.media_path, missing, self)
             self.jobs.append(job)
-            self._job_state["subtitles"] = "…"
+            self._job_state["subtitles"] = None
             self._refresh_job_label()
 
             def done(_ok, _err):
@@ -448,8 +453,9 @@ class MainWindow(QMainWindow):
     def _run_job(self, job: media.FfmpegJob, name: str, on_ok):
         self.jobs.append(job)
         state = self._job_state
-        state[name] = "0%"
-        job.progress.connect(lambda p: self._job_progress(name, f"{p * 100:.0f}%"))
+        state[name] = 0.0
+        self._refresh_job_label()
+        job.progress.connect(lambda p: self._job_progress(name, p))
 
         def done(ok, err):
             state.pop(name, None)
@@ -458,15 +464,20 @@ class MainWindow(QMainWindow):
                 on_ok()
             else:
                 self.statusBar().showMessage(f"{name} failed: {err[:200]}", 10000)
+                if name == "proxy":
+                    self._proxy_job = None
+                    self.proxy_banner.clear()
         job.done.connect(done)
         job.start()
 
-    def _job_progress(self, name, text):
-        self._job_state[name] = text
+    def _job_progress(self, name, fraction):
+        self._job_state[name] = fraction
         self._refresh_job_label()
+        if name == "proxy" and self.project.proxy_enabled:
+            self.proxy_banner.generating(fraction)
 
     def _refresh_job_label(self):
-        self.status_jobs.setText("  ".join(f"{k} {v}" for k, v in self._job_state.items()))
+        self.status_jobs.update_jobs(self._job_state)
 
     def _audio_ready(self, track: int):
         if track == self.project.audio_track:  # ignore a decode that finished after the track was changed
@@ -476,7 +487,7 @@ class MainWindow(QMainWindow):
         self._proxy_job = None
         if self.project.proxy_enabled:
             self._use_proxy_or_original()
-            self.statusBar().showMessage("Scrub proxy ready", 4000)
+            self.proxy_banner.ready()
 
     # ------------------------------------------------------------------ transcript
     def transcript(self) -> Transcript:
@@ -495,11 +506,12 @@ class MainWindow(QMainWindow):
         if self.transcript_job:
             return
         job = TranscriptJob(self.media_path, self.project.audio_track, self)
-        self.transcript_area.set_busy("Transcribing… 0%")
+        self.transcript_area.set_busy("Transcribing…", 0.0)
         self.transcript_job = job
         job.lines_ready.connect(lambda lines: self._accumulate(lines))
-        job.progress.connect(lambda p: self._job_progress("transcript", f"{p * 100:.0f}%"))
-        job.progress.connect(lambda p: self.transcript_area.set_busy(f"Transcribing… {p * 100:.0f}%"))
+        self._job_progress("transcript", 0.0)
+        job.progress.connect(lambda p: self._job_progress("transcript", p))
+        job.progress.connect(lambda p: self.transcript_area.set_busy("Transcribing…", p))
 
         def done(ok, err):
             self.transcript_area.set_busy(None)

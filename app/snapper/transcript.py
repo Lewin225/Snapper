@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import QObject, QProcess, Qt, QTimer, Signal
-from PySide6.QtWidgets import (QAbstractItemView, QHeaderView, QLabel, QLineEdit, QMenu, QPushButton, QStackedLayout,
+from PySide6.QtWidgets import (QAbstractItemView, QHeaderView, QLabel, QLineEdit, QMenu, QProgressBar, QPushButton, QStackedLayout,
                                QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 SPEECH_BACKEND_DIR = Path(__file__).resolve().parents[2] / "speech_backend"
@@ -99,7 +99,8 @@ class TranscriptJob(QObject):
         self._proc.readyReadStandardError.connect(lambda: setattr(self, "_err", self._err[-4000:] +
                                                                   bytes(self._proc.readAllStandardError())))
         self._proc.finished.connect(self._finished)
-        self._proc.errorOccurred.connect(lambda e: self.done.emit(False, f"could not start {WX_PYTHON}: {e}"))
+        self._proc.errorOccurred.connect(
+            lambda e: self.done.emit(False, f"could not start {WX_PYTHON}") if e == QProcess.FailedToStart else None)
 
     def start(self):
         self._proc.start()
@@ -214,7 +215,9 @@ class TranscriptArea(QWidget):
         page = QWidget()
         lay = QVBoxLayout(page)
         lay.addStretch(1)
-        for w in (self.message, self.btn_generate, self.btn_video, self.btn_file):
+        self.bar_empty = QProgressBar()      # progress while there are no lines to show yet
+        self.bar_empty.hide()
+        for w in (self.message, self.bar_empty, self.btn_generate, self.btn_video, self.btn_file):
             lay.addWidget(w)
         lay.addStretch(2)
         self._stack = QStackedLayout(self)
@@ -227,6 +230,15 @@ class TranscriptArea(QWidget):
         ll = QVBoxLayout(listing)
         ll.setContentsMargins(0, 0, 0, 0)
         ll.setSpacing(4)
+        self.busy_label = QLabel()           # progress strip above the list while lines are still arriving
+        self.busy_label.setStyleSheet("color: #9fc4f0;")
+        self.busy_label.setWordWrap(True)
+        self.bar_list = QProgressBar()
+        self.bar_list.setFixedHeight(12)
+        self.busy_label.hide()
+        self.bar_list.hide()
+        ll.addWidget(self.busy_label)
+        ll.addWidget(self.bar_list)
         ll.addWidget(self.search)
         ll.addWidget(panel, 1)
         self._stack.addWidget(page)
@@ -247,13 +259,25 @@ class TranscriptArea(QWidget):
             menu.addAction(label, lambda o=order: self.subtitles_requested.emit(o))
         menu.exec(self.btn_video.mapToGlobal(self.btn_video.rect().bottomLeft()))
 
-    def set_busy(self, text: Optional[str]):
-        """Shows progress in place of the buttons while a transcript is being generated."""
+    def set_busy(self, text: Optional[str], fraction: Optional[float] = None):
+        """Shows progress while a transcript is being generated: a bar in place of the buttons, or above the list
+        once the first lines have arrived. `text` None ends it."""
         busy = text is not None
-        self.message.setText(text if busy else "No transcript yet")
+        pct = "" if fraction is None else f" {fraction * 100:.0f}%"
+        self.message.setText(f"{text}{pct}" if busy else "No transcript yet")
+        self.busy_label.setText(f"{text}{pct}  New lines appear as they are found." if busy else "")
+        for bar in (self.bar_empty, self.bar_list):
+            bar.setVisible(busy)
+            if busy:
+                if fraction is None:
+                    bar.setRange(0, 0)
+                else:
+                    bar.setRange(0, 100)
+                    bar.setValue(int(fraction * 100))
+        self.busy_label.setVisible(busy)
         for b in (self.btn_generate, self.btn_video, self.btn_file):
             b.setEnabled(not busy and (b is not self.btn_video or bool(self.tracks)))
 
     def refresh(self):
         self._stack.setCurrentIndex(1 if self.panel.rowCount() else 0)
-        self.search.clear()
+        self.panel.filter(self.search.text())   # new lines arrive while a search is typed: keep it applied
