@@ -471,34 +471,36 @@ class ExportManager(QObject):
 
     cleanup_answer: Optional[bool] = None   # the user's answer about old export folders; asked once per session
 
-    def files_in(self, folder: str) -> list[Clip]:
-        """Clips whose exported file exists under `folder`."""
-        try:
-            root = Path(folder).resolve()
-        except OSError:
-            return []
-        return [c for c in self.project.clips if c.export_path and Path(c.export_path).exists()
-                and root in Path(c.export_path).resolve().parents]
+    def moved_files(self, clips: list[Clip], settings: ExportSettings) -> list[Clip]:
+        """Clips whose earlier export is still on disk but would now be written somewhere else (a different folder,
+        name or format), so the old file would be left behind or cleaned up."""
+        out = Path(settings.output_dir).resolve()
+        moved = []
+        for clip, rel in plan_files(self.project, settings, clips):
+            if clip.export_path and Path(clip.export_path).exists() and \
+                    Path(clip.export_path).resolve() != (out / rel).resolve():
+                moved.append(clip)
+        return moved
 
     def allow_cleanup(self, folder: str):
-        """Files exported to `folder` may be deleted as their clips are exported again somewhere else."""
+        """Files exported to `folder` may be tidied up (empty folders removed) when their clips move elsewhere."""
         root = Path(folder).resolve()
         if root not in self._cleanup_roots:
             self._cleanup_roots.append(root)
 
     def _old_root(self, old: Optional[str], settings: ExportSettings) -> Optional[str]:
-        """The folder an earlier export may be cleaned up inside: the current export folder, or an earlier one the
-        user agreed to clean up. None = leave the old file alone."""
-        if not old:
+        """Where an earlier export of a clip may be deleted once the new copy exists, or None to leave it alone
+        (the user said no to cleaning up). The returned folder is the limit for tidying up empty folders."""
+        if not old or self.cleanup_answer is not True:
             return None
         try:
             p = Path(old).resolve()
             for root in (Path(settings.output_dir).resolve(), *self._cleanup_roots):
                 if root in p.parents:
                     return str(root)
+            return str(p.parent.parent)   # an export folder from an earlier session: just the file (and its own folder)
         except OSError:
-            pass
-        return None
+            return None
 
     def _on_started(self, clip_id: int):
         self._transient[clip_id] = ("exporting", "Exporting…")

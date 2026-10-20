@@ -28,6 +28,9 @@ locale.setlocale(locale.LC_NUMERIC, "C")
 apply_system_theme(app)
 media.remove_export_audio(episode)   # decodes left by an aborted earlier run would hide the 'Preparing audio' step
 win = MainWindow(episode)
+from snapper.export import ExportManager, ExportSettings
+asked, reply = [], {"v": True}   # the prompt about moved files; the test answers it
+win._confirm_cleanup = lambda count, folders: (asked.append((count, folders)), reply["v"])[1]
 win.show()
 wait_until_ready(win)
 while not media.audio_path(episode, 0).exists():
@@ -269,13 +272,12 @@ win.project.auto_export = True
 win.project.remove(dup)
 print("ok   right-click: Duplicate (copy opens for editing, exports by itself), Delete, Open containing folder, Open in system app (disabled until exported)")
 
-# --- changing the export folder: ask once per session whether to clean up the old files
-from snapper.export import ExportManager
-asked = []
-def run_folder_change(new_dir, answer):
-    win._confirm_cleanup = lambda old, new, n: (asked.append((old, new, n)), answer)[1]
-    win._ask_cleanup(win.exporter.settings().output_dir, str(new_dir))
-    win.project.set_export_settings({**win.project.export_settings, "output_dir": str(new_dir)})
+# --- changing the export folder, name template or tag folders: ask once per session whether to clean up the old files
+def run_folder_change(new_dir, change=None):
+    cur = win.project.export_settings
+    new = {**cur, "output_dir": str(new_dir), **(change or {})}
+    win._confirm_moves(win.project.clips, ExportSettings.from_json(new), cur["output_dir"])
+    win.project.set_export_settings(new)
     win._auto_timer.start()
     assert waitfor(lambda: all(label(c) == "✓ Exported" and str(new_dir) in c.export_path for c in win.project.clips)), \
         [(label(c), c.export_path) for c in win.project.clips]
@@ -286,28 +288,49 @@ for d in (out_b, out_c, out_d, out_e):
     d.mkdir()
 
 # session 1: the answer is No -> asked once, nothing is ever deleted
-ExportManager.cleanup_answer = None
-run_folder_change(out_b, False)
-assert len(asked) == 1 and asked[0] == (str(out), str(out_b), n_clips), asked
+reply["v"] = False
+asked.clear(); ExportManager.cleanup_answer = None
+run_folder_change(out_b)
+assert len(asked) == 1 and asked[0] == (n_clips, (str(out), str(out_b))), asked
 assert len(files(out)) >= n_clips and len(files(out_b)) == n_clips, "declined: old files stay, new ones written"
-run_folder_change(out_c, True)          # a second change: not asked again, and the remembered No still applies
+run_folder_change(out_c)          # a second change: not asked again, and the remembered No still applies
 assert len(asked) == 1, "asked only once per session"
 assert len(files(out_b)) == n_clips and len(files(out_c)) == n_clips
 
 # session 2: the answer is Yes -> old files go once their replacements exist; foreign files and the folder stay
-ExportManager.cleanup_answer = None
+reply["v"] = True
+asked.clear(); ExportManager.cleanup_answer = None
 (out_c / "mine.txt").write_text("not ours")
-run_folder_change(out_d, True)
-assert len(asked) == 2 and asked[1][0] == str(out_c) and asked[1][2] == n_clips, asked
+run_folder_change(out_d)
+assert len(asked) == 1 and asked[0] == (n_clips, (str(out_c), str(out_d))), asked
 assert waitfor(lambda: [f.name for f in files(out_c)] == ["mine.txt"]), files(out_c)
 assert len(files(out_d)) == n_clips
 assert not [d for d in out_c.rglob("*") if d.is_dir()], "folders left empty are removed"
 assert out_c.exists(), "the old export folder itself is never removed"
 (out_d / "mine.txt").write_text("not ours")
-run_folder_change(out_e, False)          # remembered Yes for the rest of the session: no new question
-assert len(asked) == 2
+run_folder_change(out_e)          # remembered Yes for the rest of the session: no new question
+assert len(asked) == 1
 assert waitfor(lambda: [f.name for f in files(out_d)] == ["mine.txt"]), files(out_d)
 assert all(Path(c.export_path).exists() and str(out_e) in c.export_path for c in win.project.clips)
+# the same question for a name or tag-folder change inside the same folder, and for editing a clip
+reply["v"] = False
+asked.clear(); ExportManager.cleanup_answer = None
+(out_e / "mine.txt").unlink(missing_ok=True)
+before = sorted(f.name for f in files(out_e))
+cur = win.project.export_settings
+win._confirm_moves(win.project.clips, ExportSettings.from_json({**cur, "name_template": "{n}_{character}"}), cur["output_dir"])
+assert asked == [(n_clips, None)], asked
+win.project.set_export_settings({**cur, "name_template": "{n}_{character}"}); win._auto_timer.start()
+assert waitfor(lambda: all(label(c) == "✓ Exported" and Path(c.export_path).name[:3] == "%03d" % c.id for c in win.project.clips)), \
+    [(label(c), c.export_path) for c in win.project.clips]
+assert len(files(out_e)) == 2 * n_clips, "answered No: the old names stay next to the new ones"
+reply["v"] = True
+asked.clear(); ExportManager.cleanup_answer = None
+edited = win.project.clips[0]
+edited.tags["character"] = "Moved"; win.project.touch(edited)     # a tag edit moves its file to another folder
+assert waitfor(lambda: len(asked) == 1 and label(edited) == "✓ Exported" and "Moved" in edited.export_path), (asked, label(edited))
+assert asked[0] == (1, None)
+print("ok   a name or tag-folder change, or a tag edit, asks the same question (once per session)")
 print("ok   changing the export folder: asked once per session; No keeps old files; Yes deletes each after its new copy is written, only Snapper's files, empty folders tidied")
 
 # --- the states survive closing and reopening; a deleted file shows as not exported

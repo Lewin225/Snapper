@@ -703,34 +703,38 @@ class MainWindow(QMainWindow):
         if dlg.exec():
             new = dlg.settings()
             old = self._export_settings()
-            if old is not None and old.output_dir != new.output_dir:
-                self._ask_cleanup(old.output_dir, new.output_dir)
+            if old is not None:
+                self._confirm_moves(self.project.clips, new, old.output_dir)
             self.project.set_export_settings(new.to_json())
             self.exporter.verify_files()
             if self.project.auto_export:
                 self._auto_timer.start()
 
-    def _ask_cleanup(self, old_dir: str, new_dir: str):
-        """The export folder changed. Offers to delete what was exported to the old one (each file only after its new
-        copy is written). Asked once per session; the answer is kept in memory and used for later changes."""
-        stale = self.exporter.files_in(old_dir)
-        if not stale:
+    def _confirm_moves(self, clips: list[Clip], settings: exporting.ExportSettings, old_dir: Optional[str] = None):
+        """Before clips are exported to a new place (another folder, a new name or format): if their earlier files are
+        still there, asks whether those may be deleted once the new copies are written. Asked once per session; the
+        answer is kept in memory only and applies to every later change."""
+        moved = self.exporter.moved_files(clips, settings)
+        if not moved:
             return
-        answer = exporting.ExportManager.cleanup_answer
-        if answer is None:
-            answer = self._confirm_cleanup(old_dir, new_dir, len(stale))
-            exporting.ExportManager.cleanup_answer = answer
-        if answer:
+        if exporting.ExportManager.cleanup_answer is None:
+            folder = (old_dir, settings.output_dir) if old_dir and old_dir != settings.output_dir else None
+            exporting.ExportManager.cleanup_answer = self._confirm_cleanup(len(moved), folder)
+        if exporting.ExportManager.cleanup_answer and old_dir:
             self.exporter.allow_cleanup(old_dir)
 
-    def _confirm_cleanup(self, old_dir: str, new_dir: str, count: int) -> bool:
-        box = QMessageBox(QMessageBox.Question, "Export folder changed",
-                          f"The clips will now be exported to {new_dir}.\n\n"
-                          f"Delete the {count} file{'s' if count != 1 else ''} already exported to the old folder "
-                          f"({old_dir})?", QMessageBox.Yes | QMessageBox.No, self)
+    def _confirm_cleanup(self, count: int, folders: Optional[tuple[str, str]]) -> bool:
+        what = f"file{'s' if count != 1 else ''}"
+        if folders:
+            text = (f"The clips will now be exported to {folders[1]}.\n\nDelete the {count} {what} already exported "
+                    f"to the old folder ({folders[0]})?")
+        else:
+            text = (f"{count} exported {what} will get a new name or move to a different folder, because of changed "
+                    f"export settings, tags or text.\n\nDelete the old {what} once the new {'copies are' if count != 1 else 'copy is'} written?")
+        box = QMessageBox(QMessageBox.Question, "Exported files are moving", text, QMessageBox.Yes | QMessageBox.No, self)
         box.setInformativeText("Each old file is deleted only after its new copy has been written, and only files "
-                               "Snapper exported are touched (plus folders left empty inside the old folder). "
-                               "Your answer is remembered until Snapper is closed, so you are not asked again.")
+                               "Snapper exported are touched (plus folders left empty by that). Your answer is "
+                               "remembered until Snapper is closed, so you are not asked again.")
         box.setDefaultButton(QMessageBox.No)
         return box.exec() == QMessageBox.Yes
 
@@ -749,6 +753,7 @@ class MainWindow(QMainWindow):
             if not auto:
                 self.statusBar().showMessage("Everything is already exported.", 5000)
             return
+        self._confirm_moves(targets, s)
         self.exporter.mark_queued(targets)
         track = self.project.audio_track
         self._with_export_audio(
