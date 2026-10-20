@@ -20,7 +20,8 @@ from snapper.theme import apply_system_theme
 from snapper.main_window import MainWindow
 from snapper.transcript import Transcript, parse_srt
 
-episode, srt, shot = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+from support import episode_arg, shot_arg
+episode, shot = episode_arg(), shot_arg('snapper_smoke.png')
 app = QApplication(sys.argv)
 locale.setlocale(locale.LC_NUMERIC, "C")
 apply_system_theme(app)
@@ -64,17 +65,18 @@ print("     proxy done: pos", round(win.player.pos, 2), "paused", win.player.pau
 QTest.qWait(1500)
 print("ok   proxy swapped in; pos", round(win.player.pos, 2))
 
-lines = parse_srt(srt.read_text(encoding="utf-8"))
+lines = parse_srt(media.extract_subtitle(episode, 0).read_text(encoding="utf-8"))   # the embedded track
 win.set_transcript(Transcript(lines))
-assert len(win.transcript().lines) > 100, "subtitle parse"
+assert len(win.transcript().lines) >= 10, "subtitle parse"
 print("ok   subtitles parsed:", len(win.transcript().lines), "lines")
 
-# click a transcript line far into the episode -> pending selection
-i = win.transcript().index_at(620.0)
+# click a transcript line -> pending selection
+i = win.transcript().index_at(15.0)
 win.transcript_panel.line_selected.emit(i)
 QTest.qWait(300)
 c = win.editor.clip
 assert c.id is None and c.start is not None and c.end is not None, "line click should set a range"
+line_start = c.start
 print(f"ok   line click -> {c.start:.2f}-{c.end:.2f} text={c.text!r}")
 
 win.editor.set_tag("character", "voice1")
@@ -84,18 +86,18 @@ assert win.editor.clip.tags.get("character") == "voice1" and win.editor.clip.sta
 print("ok   commit created clip; character stays set; range cleared")
 
 # cut by hand: seek, I, play a bit, O
-win.player.seek(700.0)
+win.player.seek(40.0)
 QTest.qWait(500)
 key(Qt.Key_I)
-win.player.seek(702.4)
+win.player.seek(42.4)
 for _ in range(50):   # poll instead of a fixed wait: mpv in a test window can be slow to finish a seek
     QTest.qWait(100)
-    if abs(win.player.pos - 702.4) < 0.05:
+    if abs(win.player.pos - 42.4) < 0.05:
         break
-assert abs(win.player.pos - 702.4) < 0.05, f"cached position is stale after a seek: {win.player.pos}"
+assert abs(win.player.pos - 42.4) < 0.05, f"cached position is stale after a seek: {win.player.pos}"
 key(Qt.Key_O)
 c = win.editor.clip
-assert abs(c.start - 700.0) < 0.1 and abs(c.end - 702.4) < 0.1, (c.start, c.end)
+assert abs(c.start - 40.0) < 0.1 and abs(c.end - 42.4) < 0.1, (c.start, c.end)
 print(f"ok   I/O keys -> {c.start:.3f}-{c.end:.3f} auto-text={c.text!r}")
 key(Qt.Key_1)
 assert c.tags["character"] == "voice1"
@@ -107,7 +109,7 @@ win.clips.clip_selected.emit(win.project.clips[0])
 QTest.qWait(300)
 assert win.editor.clip is win.project.clips[0]
 win.on_wave_edited(win.editor.clip.start + 0.2, win.editor.clip.end)
-assert abs(win.project.clips[0].start - 617.82) < 0.01, win.project.clips[0].start
+assert abs(win.project.clips[0].start - (line_start + 0.2)) < 0.01, win.project.clips[0].start
 win.project.rename_value("character", "voice1", "Alastor")
 assert all(c.tags["character"] == "Alastor" for c in win.project.clips)
 print("ok   edit existing clip; global rename voice1 -> Alastor")
@@ -123,10 +125,10 @@ print("ok   tag filter")
 from PySide6.QtWidgets import QPushButton
 btn = {b.text(): b for b in win.findChildren(QPushButton)}
 win.edit(win.pending)
-win.player.seek(900.0); QTest.qWait(500)
-btn["Set In (I)"].click(); win.player.seek(903.0); QTest.qWait(500); btn["Set Out (O)"].click()
+win.player.seek(60.0); QTest.qWait(500)
+btn["Set In (I)"].click(); win.player.seek(63.0); QTest.qWait(500); btn["Set Out (O)"].click()
 c = win.editor.clip
-assert abs(c.start - 900.0) < 0.1 and abs(c.end - 903.0) < 0.1, (c.start, c.end)
+assert abs(c.start - 60.0) < 0.1 and abs(c.end - 63.0) < 0.1, (c.start, c.end)
 btn["Deselect clip (Esc)"].click()
 assert win.editor.clip.start is None and win.editor.wave.sel_in is None, "clear selection"
 win.clips.clip_selected.emit(win.project.clips[0])
@@ -148,7 +150,7 @@ win.start_transcription()
 wait(lambda: win.transcript_job is None, "WhisperX transcription finished", 400000)
 tr = win.transcript()
 nwords = sum(len(l["words"]) for l in tr.lines)
-assert len(tr.lines) > 100 and nwords > 1000, (len(tr.lines), nwords)
+assert len(tr.lines) >= 8 and nwords >= 20, (len(tr.lines), nwords)
 print(f"ok   WhisperX transcript: {len(tr.lines)} lines, {nwords} words")
 starts = [l["start"] for l in tr.lines]
 assert starts == sorted(starts)
@@ -157,10 +159,10 @@ assert dups == 0, f"{dups} duplicated lines at window seams"
 print("ok   no duplicate lines at window seams")
 
 win.edit(win.pending)
-win.set_range(700.0, 702.4)
-print("     word-based text for 700.0-702.4:", repr(win.editor.clip.text))
+win.set_range(27.4, 29.8)   # "I've had smaller." is spoken here
+print("     word-based text for 27.4-29.8:", repr(win.editor.clip.text))
 assert win.editor.clip.text, "text from words"
-assert win.editor.wave.word_source(698.0, 705.0), "words reach the waveform"
+assert win.editor.wave.word_source(26.0, 31.0), "words reach the waveform"
 QTest.qWait(500)
 win.grab().save(shot)
 win.project.save()

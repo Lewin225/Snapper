@@ -16,7 +16,8 @@ from snapper.export import (ExportSettings, clip_frames, export_clips, plan_file
 from snapper.model import Clip, Project
 from snapper.pathnames import clean_part, clean_tag, has_invalid_chars
 
-episode = Path(sys.argv[1])
+from support import episode_arg
+episode = episode_arg()
 
 # --- name safety
 assert clean_part('a/b\\c:d*e?f"g<h>i|j') == "a_b_c_d_e_f_g_h_i_j"
@@ -86,7 +87,7 @@ assert wf.exists(), "needs the warm cache (run the app once on this episode)"
 wave_pcm = media.open_pcm(wf, 1, 16)
 p2 = Project(episode)
 p2.clips.clear()
-for a, b in ((700.0, 702.417), (0.0, 1.5), (123.4567, 125.0), (1966.0, 1967.232), (1967.0, 1999.0)):
+for a, b in ((40.0, 42.417), (0.0, 1.5), (53.4567, 55.0), (80.0, 81.0), (80.5, 120.0)):
     p2.add(Clip(a, b, f"clip {a}", True, {"character": "A"}))
 settings = ExportSettings(name_template="c{n}", text_field="title", embed_tags=True)
 out = mk()
@@ -110,7 +111,7 @@ def decode(ch, rate, bits):
     return media.open_pcm(path, ch, bits)
 st = decode(2, 44100, 16)
 assert abs(len(st) - len(wave_pcm)) <= 2, (len(st), len(wave_pcm))
-a, b = int(700 * 44100), int(705 * 44100)
+a, b = int(40 * 44100), int(45 * 44100)
 mono_ref = wave_pcm[a:b, 0].astype(np.float64)
 mix = st[a:b].astype(np.float64).mean(axis=1)
 def best_lag(x, y, maxlag=2000):
@@ -139,7 +140,7 @@ def decode_mp3(path, ch, rate):
     raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-f", "s16le", "-ac", str(ch), "-ar", str(rate), "-"], capture_output=True).stdout
     return np.frombuffer(raw, "<i2").reshape(-1, ch)
 pm = Project(episode); pm.add_tag_type("overlap", "bool")
-cm = pm.add(Clip(700.0, 702.417, "But, yeah, “that” might be fun.", True, {"character": "Alastor", "overlap": True}))
+cm = pm.add(Clip(40.0, 42.417, "But, yeah, “that” might be fun.", True, {"character": "Alastor", "overlap": True}))
 for q, kbps_lo, kbps_hi in (("128", 120e3, 136e3), ("v2", 40e3, 260e3)):
     sm = ExportSettings(name_template="m_{n}", format="mp3", mp3_quality=q, folder_tags=["character"])
     assert sm.source_bits == 16

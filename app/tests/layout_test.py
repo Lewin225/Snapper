@@ -20,7 +20,7 @@ from snapper.main_window import MainWindow
 app = QApplication(sys.argv)
 locale.setlocale(locale.LC_NUMERIC, "C")
 apply_system_theme(app)
-win = MainWindow(Path(sys.argv[1]))
+win = MainWindow(__import__('support').episode_arg())
 win.show()
 win.move(900, 40)  # leave room on the left: a real drag cannot go past the screen edge
 QTest.qWait(1500)

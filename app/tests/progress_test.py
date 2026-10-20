@@ -13,7 +13,8 @@ from snapper.theme import apply_system_theme
 from snapper.main_window import MainWindow
 from snapper.transcript import Transcript
 
-episode, shot = Path(sys.argv[1]), sys.argv[2]
+from support import episode_arg, shot_arg
+episode, shot = episode_arg(), shot_arg('snapper_progress.png')
 app = QApplication(sys.argv)
 locale.setlocale(locale.LC_NUMERIC, "C")
 apply_system_theme(app)

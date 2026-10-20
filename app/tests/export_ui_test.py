@@ -22,7 +22,8 @@ from snapper.model import Clip, Project
 from snapper.theme import apply_system_theme
 from support import wait_until_ready
 
-episode, shot = Path(sys.argv[1]), sys.argv[2]
+from support import episode_arg, shot_arg
+episode, shot = episode_arg(), shot_arg('snapper_export.png')
 app = QApplication(sys.argv)
 locale.setlocale(locale.LC_NUMERIC, "C")
 apply_system_theme(app)
@@ -45,9 +46,9 @@ print("ok   Export is disabled until the project has export settings; Export Set
 
 def add(a, b, text, **tags):
     return win.project.add(Clip(a, b, text, True, tags))
-c1 = add(700.0, 702.417, "But, yeah, that might be fun.", character="Alastor", emotion="happy")
-c2 = add(710.0, 712.0, "Second line", character="Husk", overlap=True)
-c3 = add(720.0, 721.5, "Third line", character="Alastor")
+c1 = add(10.0, 12.417, "But, yeah, that might be fun.", character="Alastor", emotion="happy")
+c2 = add(20.0, 22.0, "Second line", character="Husk", overlap=True)
+c3 = add(30.0, 31.5, "Third line", character="Alastor")
 assert not win.clips.export_btn.isEnabled(), "still no settings"
 
 out = mk() / "exports"
@@ -190,11 +191,11 @@ win.project.set_export_settings({**win.project.export_settings, "channels": 1, "
 win.clips.auto_export.click()
 assert win.project.auto_export
 assert waitfor(lambda: all(label(c) == "✓ Exported" for c in (c1, c2, c3))), [label(c) for c in (c1, c2, c3)]
-new = add(740.0, 741.0, "Auto one", character="Husk")
+new = add(50.0, 51.0, "Auto one", character="Husk")
 assert waitfor(lambda: label(new) == "✓ Exported"), label(new)
 assert Path(new.export_path).exists() and Path(new.export_path).name == "Husk_003_Auto one.wav".replace("003", "%03d" % new.id)
 old = new.export_path
-new.text = "Auto two"; new.end = 741.5; win.project.touch(new)
+new.text = "Auto two"; new.end = 51.5; win.project.touch(new)
 assert waitfor(lambda: label(new) == "✓ Exported" and new.export_path != old), (label(new), new.export_path)
 assert not Path(old).exists()
 bad = add(99999.0, 99999.5, "Nowhere", character="Husk")
@@ -205,12 +206,12 @@ win.exporter.submit = lambda *a, **k: (tries.append(1), orig(*a, **k))[1]
 win.project.touch(c1); QTest.qWait(1500)     # unrelated change: the failed clip is not retried
 assert not tries and label(bad) == "✗ Failed", tries
 win.exporter.submit = orig
-bad.start, bad.end = 700.0, 701.0; win.project.touch(bad)   # edited: now it is tried again, and works
+bad.start, bad.end = 10.0, 11.0; win.project.touch(bad)   # edited: now it is tried again, and works
 assert waitfor(lambda: label(bad) == "✓ Exported")
 win.project.remove(bad)
 win.clips.auto_export.click()
 assert not win.project.auto_export
-late = add(750.0, 751.0, "Not auto", character="Husk")
+late = add(60.0, 61.0, "Not auto", character="Husk")
 QTest.qWait(1500)
 assert label(late) == "", label(late)
 win.project.remove(late)
@@ -262,7 +263,7 @@ assert Path(dup.export_path) != Path(tgt.export_path) and Path(dup.export_path).
 right_click(tgt, "Open containing folder")
 right_click(tgt, "Open in system app")
 assert opened == [("folder", Path(tgt.export_path)), ("open", Path(tgt.export_path))], opened
-fresh = win.project.add(Clip(790.0, 791.0, "Never exported", True, {"character": "Husk"}))
+fresh = win.project.add(Clip(75.0, 76.0, "Never exported", True, {"character": "Husk"}))
 win.project.auto_export = False
 fresh.export_path = None
 right_click(fresh, "Delete")   # the menu's actions for an unexported clip: file actions are disabled
@@ -337,7 +338,7 @@ print("ok   a folder, name or tag-folder change, or a tag edit, asks every time;
 choice = {"v": "cancel"}
 prompts = []
 win._confirm_delete = lambda clip: (prompts.append(clip.id), choice["v"])[1]
-victim, victim2 = add(760.0, 761.0, "Doomed one", character="Husk"), add(770.0, 771.0, "Doomed two", character="Husk")
+victim, victim2 = add(70.0, 71.0, "Doomed one", character="Husk"), add(80.0, 81.0, "Doomed two", character="Husk")
 assert waitfor(lambda: label(victim) == "✓ Exported" and label(victim2) == "✓ Exported")
 kept = Path(victim.export_path)
 n = len(win.project.clips)

@@ -7,13 +7,14 @@ os.environ.setdefault("SNAPPER_DATA", tempfile.mkdtemp())
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
+from snapper import media
 from snapper.theme import apply_system_theme
 from snapper.main_window import MainWindow
 from snapper.model import Project
 from snapper.transcript import Transcript, parse_srt
-from support import wait_until_ready
+from support import episode_arg, wait_until_ready
 
-episode, srt = Path(sys.argv[1]), Path(sys.argv[2])
+episode = episode_arg()
 app = QApplication(sys.argv)
 locale.setlocale(locale.LC_NUMERIC, "C")
 apply_system_theme(app)
@@ -25,12 +26,12 @@ assert win.project.path.parent == Path(os.environ["SNAPPER_DATA"]) / "projects",
 assert not list(episode.parent.glob("*.snapper.json")), "nothing is written next to the video"
 print("ok   project file lives in the app data folder, not beside the video")
 
-win.set_transcript(Transcript(parse_srt(srt.read_text(encoding="utf-8", errors="replace"))), persist=True)
+win.set_transcript(Transcript(parse_srt(media.extract_subtitle(episode, 0).read_text(encoding="utf-8", errors="replace"))), persist=True)
 n_lines = len(win.transcript().lines)
-win.set_range(700.0, 702.4, "hello there")
+win.set_range(40.0, 42.4, "hello there")
 win.editor.set_tag("character", "Alastor")
 win.commit()
-win.set_range(710.0, 712.0, "second")
+win.set_range(50.0, 52.0, "second")
 win.commit()
 clip2 = win.project.clips[1]
 win.edit(clip2)
@@ -50,7 +51,7 @@ win.close()
 wait_until_ready(win2)
 assert win2.media_path.resolve() == episode.resolve()
 assert len(win2.transcript().lines) == n_lines
-assert win2.editor.clip.id == clip2.id and abs(win2.editor.clip.start - 710.0) < 1e-6, "selected clip restored"
+assert win2.editor.clip.id == clip2.id and abs(win2.editor.clip.start - 50.0) < 1e-6, "selected clip restored"
 assert win2.act_proxy.isChecked() is False and not win2._on_proxy and win2._proxy_job is None
 print("ok   reopened from the project file: transcript, clips, selected clip and proxy setting restored")
 

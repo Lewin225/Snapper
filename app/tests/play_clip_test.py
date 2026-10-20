@@ -21,23 +21,23 @@ from support import wait_until_ready
 app = QApplication(sys.argv)
 locale.setlocale(locale.LC_NUMERIC, "C")
 apply_system_theme(app)
-win = MainWindow(Path(sys.argv[1]))
+win = MainWindow(__import__('support').episode_arg())
 win.show()
 wait_until_ready(win)
 btn = {b.text(): b for b in win.findChildren(QPushButton)}
 
-win.set_range(700.0, 702.4)
+win.set_range(40.0, 42.4)
 btn["▶ Play Clip (P)"].click()
 QTest.qWait(1000)
 assert not win.player.paused, "should be playing mid-clip"
 QTest.qWait(3500)
-print(f"Play Clip: paused={win.player.paused} pos={win.player.pos:.3f} (out marker 702.400)")
-assert win.player.paused and abs(win.player.pos - 702.4) < 0.1, "should stop at the out marker"
+print(f"Play Clip: paused={win.player.paused} pos={win.player.pos:.3f} (out marker 42.400)")
+assert win.player.paused and abs(win.player.pos - 42.4) < 0.1, "should stop at the out marker"
 
-btn["▶| Play from In"].click()
+win.play_from_in()   # no button any more; the I-key position is the clip start
 QTest.qWait(4500)
 print(f"Play from In: paused={win.player.paused} pos={win.player.pos:.3f}")
-assert not win.player.paused and win.player.pos > 703.5, "Play from In must not stop at the out marker"
+assert not win.player.paused and win.player.pos > 42.9, "Play from In must not stop at the out marker"
 win.player.stop()
 print("PLAY CLIP OK")
 win.close()

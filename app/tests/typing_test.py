@@ -12,7 +12,8 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 from snapper.theme import apply_system_theme
 from snapper.main_window import MainWindow
-ep = Path(sys.argv[1])
+from support import episode_arg
+ep = episode_arg()
 app = QApplication(sys.argv); locale.setlocale(locale.LC_NUMERIC, "C"); apply_system_theme(app)
 win = MainWindow(ep); win.show(); win.activateWindow()
 QTest.qWait(4000)
