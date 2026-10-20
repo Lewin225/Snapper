@@ -701,10 +701,38 @@ class MainWindow(QMainWindow):
     def edit_export_settings(self):
         dlg = ExportSettingsDialog(self.project, self)
         if dlg.exec():
-            self.project.set_export_settings(dlg.settings().to_json())
+            new = dlg.settings()
+            old = self._export_settings()
+            if old is not None and old.output_dir != new.output_dir:
+                self._ask_cleanup(old.output_dir, new.output_dir)
+            self.project.set_export_settings(new.to_json())
             self.exporter.verify_files()
             if self.project.auto_export:
                 self._auto_timer.start()
+
+    def _ask_cleanup(self, old_dir: str, new_dir: str):
+        """The export folder changed. Offers to delete what was exported to the old one (each file only after its new
+        copy is written). Asked once per session; the answer is kept in memory and used for later changes."""
+        stale = self.exporter.files_in(old_dir)
+        if not stale:
+            return
+        answer = exporting.ExportManager.cleanup_answer
+        if answer is None:
+            answer = self._confirm_cleanup(old_dir, new_dir, len(stale))
+            exporting.ExportManager.cleanup_answer = answer
+        if answer:
+            self.exporter.allow_cleanup(old_dir)
+
+    def _confirm_cleanup(self, old_dir: str, new_dir: str, count: int) -> bool:
+        box = QMessageBox(QMessageBox.Question, "Export folder changed",
+                          f"The clips will now be exported to {new_dir}.\n\n"
+                          f"Delete the {count} file{'s' if count != 1 else ''} already exported to the old folder "
+                          f"({old_dir})?", QMessageBox.Yes | QMessageBox.No, self)
+        box.setInformativeText("Each old file is deleted only after its new copy has been written, and only files "
+                               "Snapper exported are touched (plus folders left empty inside the old folder). "
+                               "Your answer is remembered until Snapper is closed, so you are not asked again.")
+        box.setDefaultButton(QMessageBox.No)
+        return box.exec() == QMessageBox.Yes
 
     def export_clips(self, force: bool = False, auto: bool = False):
         """Queues the clips that need exporting (all of them if `force`). Returns at once: the work happens in the

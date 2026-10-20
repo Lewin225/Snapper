@@ -347,15 +347,15 @@ class _Worker(QThread):
             job = self.jobs.get()
             if job is None:
                 return
-            clip, rel, kinds, settings, pcm_path, old = job
+            clip, rel, kinds, settings, pcm_path, old, old_root = job
             self.started_clip.emit(clip.id)
             try:
                 if pcm_path not in self._pcm:
                     self._pcm[pcm_path] = media_cache.open_pcm(Path(pcm_path), settings.channels, settings.source_bits)
                 out_dir = Path(settings.output_dir)
                 target = write_one(clip, rel, kinds, settings, self._pcm[pcm_path], out_dir)
-                if old and Path(old).resolve() != target:
-                    remove_exported(Path(old), out_dir)
+                if old and old_root and Path(old).resolve() != target:   # the new copy exists: drop the old one
+                    remove_exported(Path(old), Path(old_root))
                 self.finished_clip.emit(clip.id, True, str(target))
             except Exception as e:   # bad time range, disk full, permission denied...
                 self.finished_clip.emit(clip.id, False, str(e) if isinstance(e, ValueError) else f"{type(e).__name__}: {e}")
@@ -374,7 +374,8 @@ class ExportManager(QObject):
         self._transient: dict[int, tuple[str, str]] = {}   # clip id -> (queued|exporting|failed, message)
         self._sig: dict[int, str] = {}
         self._failed_sig: dict[int, Optional[str]] = {}   # clip id -> its signature when it failed
-        self._sigs_at_submit: dict[int, str] = {}   # clip id -> signature when it was queued
+        self._sigs_at_submit: dict[int, str] = {}
+        self._cleanup_roots: list[Path] = []   # earlier export folders whose files may be deleted once re-exported   # clip id -> signature when it was queued
         self._settings: Optional[tuple[int, ExportSettings]] = None
         self._worker: Optional[_Worker] = None
         self._pending = 0     # submitted and not finished
@@ -465,7 +466,39 @@ class ExportManager(QObject):
         for c in clips:
             snap = replace(c, tags=dict(c.tags))   # the clip may be edited while it waits
             self._sigs_at_submit[c.id] = export_signature(c, settings, self.project.audio_track)
-            self._worker.jobs.put((snap, plan[c.id], kinds, settings, str(pcm_path), c.export_path))
+            self._worker.jobs.put((snap, plan[c.id], kinds, settings, str(pcm_path), c.export_path,
+                                   self._old_root(c.export_path, settings)))
+
+    cleanup_answer: Optional[bool] = None   # the user's answer about old export folders; asked once per session
+
+    def files_in(self, folder: str) -> list[Clip]:
+        """Clips whose exported file exists under `folder`."""
+        try:
+            root = Path(folder).resolve()
+        except OSError:
+            return []
+        return [c for c in self.project.clips if c.export_path and Path(c.export_path).exists()
+                and root in Path(c.export_path).resolve().parents]
+
+    def allow_cleanup(self, folder: str):
+        """Files exported to `folder` may be deleted as their clips are exported again somewhere else."""
+        root = Path(folder).resolve()
+        if root not in self._cleanup_roots:
+            self._cleanup_roots.append(root)
+
+    def _old_root(self, old: Optional[str], settings: ExportSettings) -> Optional[str]:
+        """The folder an earlier export may be cleaned up inside: the current export folder, or an earlier one the
+        user agreed to clean up. None = leave the old file alone."""
+        if not old:
+            return None
+        try:
+            p = Path(old).resolve()
+            for root in (Path(settings.output_dir).resolve(), *self._cleanup_roots):
+                if root in p.parents:
+                    return str(root)
+        except OSError:
+            pass
+        return None
 
     def _on_started(self, clip_id: int):
         self._transient[clip_id] = ("exporting", "Exporting…")

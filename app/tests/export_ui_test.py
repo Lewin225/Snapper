@@ -269,6 +269,47 @@ win.project.auto_export = True
 win.project.remove(dup)
 print("ok   right-click: Duplicate (copy opens for editing, exports by itself), Delete, Open containing folder, Open in system app (disabled until exported)")
 
+# --- changing the export folder: ask once per session whether to clean up the old files
+from snapper.export import ExportManager
+asked = []
+def run_folder_change(new_dir, answer):
+    win._confirm_cleanup = lambda old, new, n: (asked.append((old, new, n)), answer)[1]
+    win._ask_cleanup(win.exporter.settings().output_dir, str(new_dir))
+    win.project.set_export_settings({**win.project.export_settings, "output_dir": str(new_dir)})
+    win._auto_timer.start()
+    assert waitfor(lambda: all(label(c) == "✓ Exported" and str(new_dir) in c.export_path for c in win.project.clips)), \
+        [(label(c), c.export_path) for c in win.project.clips]
+n_clips = len(win.project.clips)
+files = lambda d: [f for f in d.rglob("*") if f.is_file()]
+out_b, out_c, out_d, out_e = (mk() / n for n in ("exports_b", "exports_c", "exports_d", "exports_e"))
+for d in (out_b, out_c, out_d, out_e):
+    d.mkdir()
+
+# session 1: the answer is No -> asked once, nothing is ever deleted
+ExportManager.cleanup_answer = None
+run_folder_change(out_b, False)
+assert len(asked) == 1 and asked[0] == (str(out), str(out_b), n_clips), asked
+assert len(files(out)) >= n_clips and len(files(out_b)) == n_clips, "declined: old files stay, new ones written"
+run_folder_change(out_c, True)          # a second change: not asked again, and the remembered No still applies
+assert len(asked) == 1, "asked only once per session"
+assert len(files(out_b)) == n_clips and len(files(out_c)) == n_clips
+
+# session 2: the answer is Yes -> old files go once their replacements exist; foreign files and the folder stay
+ExportManager.cleanup_answer = None
+(out_c / "mine.txt").write_text("not ours")
+run_folder_change(out_d, True)
+assert len(asked) == 2 and asked[1][0] == str(out_c) and asked[1][2] == n_clips, asked
+assert waitfor(lambda: [f.name for f in files(out_c)] == ["mine.txt"]), files(out_c)
+assert len(files(out_d)) == n_clips
+assert not [d for d in out_c.rglob("*") if d.is_dir()], "folders left empty are removed"
+assert out_c.exists(), "the old export folder itself is never removed"
+(out_d / "mine.txt").write_text("not ours")
+run_folder_change(out_e, False)          # remembered Yes for the rest of the session: no new question
+assert len(asked) == 2
+assert waitfor(lambda: [f.name for f in files(out_d)] == ["mine.txt"]), files(out_d)
+assert all(Path(c.export_path).exists() and str(out_e) in c.export_path for c in win.project.clips)
+print("ok   changing the export folder: asked once per session; No keeps old files; Yes deletes each after its new copy is written, only Snapper's files, empty folders tidied")
+
 # --- the states survive closing and reopening; a deleted file shows as not exported
 win.project.save()
 Path(c3.export_path).unlink()
