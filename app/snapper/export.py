@@ -339,6 +339,7 @@ class ExportManager(QObject):
         self.project = project
         self._transient: dict[int, tuple[str, str]] = {}   # clip id -> (queued|exporting|failed, message)
         self._sig: dict[int, str] = {}
+        self._failed_sig: dict[int, Optional[str]] = {}   # clip id -> its signature when it failed
         self._sigs_at_submit: dict[int, str] = {}   # clip id -> signature when it was queued
         self._settings: Optional[tuple[int, ExportSettings]] = None
         self._worker: Optional[_Worker] = None
@@ -371,7 +372,11 @@ class ExportManager(QObject):
 
     def state(self, clip: Clip) -> str:
         if clip.id in self._transient:
-            return self._transient[clip.id][0]
+            st = self._transient[clip.id][0]
+            if st == "failed" and self._failed_sig.get(clip.id) != self.current_signature(clip):
+                del self._transient[clip.id]   # edited since it failed: worth another try
+            else:
+                return st
         if clip.export_sig:
             return "done" if clip.export_sig == self.current_signature(clip) else "changed"
         return "none"
@@ -384,9 +389,10 @@ class ExportManager(QObject):
                 "changed": "Changed since it was exported (or the export settings changed). Export again to update it."}
         return st, tips.get(st, "")
 
-    def outstanding(self, clips: list[Clip]) -> list[Clip]:
-        """Clips that still need exporting: never exported, changed since, or failed last time."""
-        return [c for c in clips if self.state(c) in ("none", "changed", "failed")]
+    def outstanding(self, clips: list[Clip], retry_failed: bool = True) -> list[Clip]:
+        """Clips that still need exporting: never exported, changed since, or (if asked) failed last time."""
+        wanted = ("none", "changed", "failed") if retry_failed else ("none", "changed")
+        return [c for c in clips if self.state(c) in wanted]
 
     def verify_files(self):
         """Forgets exports whose file has been deleted since (so they show as not exported)."""
@@ -407,6 +413,7 @@ class ExportManager(QObject):
         """The audio for these clips could not be prepared."""
         for c in clips:
             self._transient[c.id] = ("failed", reason)
+            self._failed_sig[c.id] = self.current_signature(c)
             self.state_changed.emit(c.id)
         self._pending -= len(clips)
         self._batch_done += len(clips)
@@ -440,6 +447,7 @@ class ExportManager(QObject):
                 self.project.dirty.emit()
         else:
             self._transient[clip_id] = ("failed", info)
+            self._failed_sig[clip_id] = self._sigs_at_submit.get(clip_id)
         self._pending -= 1
         self._batch_done += 1
         self.state_changed.emit(clip_id)

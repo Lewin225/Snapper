@@ -63,6 +63,7 @@ class Project(QObject):
         self.tag_values: dict[str, list[str]] = {}  # first-seen order, so number-key shortcuts stay stable
         self.clips: list[Clip] = []
         self.audio_track = 0                         # which audio track of the episode is being cut
+        self.auto_export = False                     # export clips as soon as they are created or changed
         self.proxy_enabled = True                    # use (and generate) the fast-scrubbing proxy video
         self.selected_clip: Optional[int] = None     # id of the clip open in the editor, if any
         self.transcript: Optional[list[dict]] = None  # the transcript lines (with word times), kept with the project
@@ -102,6 +103,7 @@ class Project(QObject):
         self.tag_values = d.get("tag_values", {})
         self.audio_track = d.get("audio_track", 0)
         self.proxy_enabled = d.get("proxy_enabled", True)
+        self.auto_export = bool(d.get("auto_export", False))
         self.selected_clip = d.get("selected_clip")
         self.transcript = d.get("transcript")
         self.export_settings = d.get("export_settings")
@@ -122,6 +124,7 @@ class Project(QObject):
             rel = None
         tmp.write_text(json.dumps({
             "version": 2, "video": str(self.media.resolve()), "video_rel": rel, "proxy_enabled": self.proxy_enabled,
+            "auto_export": self.auto_export,
             "audio_track": self.audio_track, "selected_clip": self.selected_clip,
             "tag_types": self.tag_types, "tag_kinds": self.tag_kinds, "tag_values": self.tag_values,
             "next_id": self._next_id, "clips": [c.to_json() for c in self.clips],

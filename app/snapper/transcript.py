@@ -13,6 +13,8 @@ from PySide6.QtCore import QObject, QProcess, Qt, QTimer, Signal
 from PySide6.QtWidgets import (QAbstractItemView, QHeaderView, QLabel, QLineEdit, QMenu, QProgressBar, QPushButton, QStackedLayout,
                                QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
+from .titles import section_title
+
 SPEECH_BACKEND_DIR = Path(__file__).resolve().parents[2] / "speech_backend"
 WX_PYTHON = os.environ.get("SNAPPER_WX_PYTHON", os.path.expanduser("~/envs/wx/bin/python"))
 
@@ -215,6 +217,7 @@ class TranscriptArea(QWidget):
         page = QWidget()
         lay = QVBoxLayout(page)
         lay.setContentsMargins(14, 8, 0, 0)   # left edge lines up with the clip editor below; space under the menu bar
+        lay.addWidget(section_title("Transcript"))
         lay.addStretch(1)
         self.bar_empty = QProgressBar()      # progress while there are no lines to show yet
         self.bar_empty.hide()
@@ -233,6 +236,7 @@ class TranscriptArea(QWidget):
         ll.setSpacing(4)
         self.bar_list = QProgressBar()       # progress above the list while lines are still arriving
         self.bar_list.hide()
+        ll.addWidget(section_title("Transcript"))
         ll.addWidget(self.bar_list)
         ll.addWidget(self.search)
         ll.addWidget(panel, 1)

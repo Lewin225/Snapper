@@ -16,6 +16,7 @@ from . import export as exporting
 from .export_dialog import ExportSettingsDialog
 from .pathnames import INVALID_HELP, VALID_INPUT_PATTERN, clean_tag
 from .progress import JobBars, ProxyBanner
+from .titles import section_title
 from .clips_panel import ClipsPanel
 from .editor import ClipEditor
 from .model import INVALID_HELP_TEXT, Clip, Project
@@ -83,6 +84,7 @@ class MainWindow(QMainWindow):
         self.sub_labels: dict[int, str] = {}
         self._proxy_job: Optional[media.FfmpegJob] = None
         self.exporter = exporting.ExportManager(self.project, self)
+        self._auto_timer = QTimer(self, interval=700, singleShot=True, timeout=self._auto_export)
         self._spinner = QTimer(self, interval=150)   # animates the 'Exporting' marker in the library
         self._pcm_waiters: dict[Path, list] = {}   # decoded audio being prepared -> who is waiting for it
         self._on_proxy = False
@@ -104,6 +106,7 @@ class MainWindow(QMainWindow):
         vl = QVBoxLayout(video_box)
         vl.setContentsMargins(0, 8, 0, 0)
         self.proxy_banner = ProxyBanner()
+        vl.addWidget(section_title("Playback"))
         vl.addWidget(self.proxy_banner)
         vl.addWidget(self.video, 1)
         vl.addWidget(self.slider)
@@ -140,7 +143,7 @@ class MainWindow(QMainWindow):
         root.setCollapsible(0, False)  # everything on the left
         root.setCollapsible(1, True)   # clip list
         video_box.setMinimumSize(max(360, controls.sizeHint().width()), 320)
-        self.editor.setMinimumHeight(330)
+        self.editor.setMinimumHeight(356)   # includes the pane title
         left.setMinimumWidth(640)
         self.transcript_area.setMinimumWidth(120)
         self.clips.setMinimumWidth(240)
@@ -184,6 +187,9 @@ class MainWindow(QMainWindow):
         self.clips.rename_requested.connect(self.rename_value)
         self.clips.export_requested.connect(self.export_clips)
         self.clips.export_settings_requested.connect(self.edit_export_settings)
+        self.clips.auto_export_toggled.connect(self.set_auto_export)
+        for sig in (self.project.clip_changed, self.project.structure_changed):
+            sig.connect(lambda *_: self.project.auto_export and self._auto_timer.start())
         self.project.dirty.connect(self._update_export_state)
         self.clips.model.export_status = self.exporter.status
         self._spinner.timeout.connect(self.clips.model.tick)
@@ -662,29 +668,52 @@ class MainWindow(QMainWindow):
             enabled, tip = False, "There are no clips in the library to export."
         else:
             enabled, tip = True, "Export the clips that are new or changed since they were last exported."
-        self.clips.set_export_enabled(enabled, tip)
+        ready = s is not None and not exporting.output_dir_problem(s.output_dir)
+        self.clips.set_export_enabled(
+            enabled, tip, ready,
+            "Export each clip automatically as soon as it is saved or changed." if ready else tip)
         self.act_export.setEnabled(enabled)
         self.act_export_all.setEnabled(enabled)
+
+    def set_auto_export(self, on: bool):
+        if on != self.project.auto_export:
+            self.project.auto_export = on
+            self.project.dirty.emit()
+        if on:
+            self._auto_timer.start()   # catches up on everything not exported yet
+
+    def _auto_export(self):
+        """Auto export: queue what is new or changed. Runs shortly after the last edit, so dragging a clip's
+        handles does not export every step."""
+        if self.project.auto_export and self._auto_ready():
+            self.export_clips(auto=True)
+
+    def _auto_ready(self) -> bool:
+        s = self._export_settings()
+        return s is not None and not exporting.output_dir_problem(s.output_dir)
 
     def edit_export_settings(self):
         dlg = ExportSettingsDialog(self.project, self)
         if dlg.exec():
             self.project.set_export_settings(dlg.settings().to_json())
             self.exporter.verify_files()
+            if self.project.auto_export:
+                self._auto_timer.start()
 
-    def export_clips(self, force: bool = False):
+    def export_clips(self, force: bool = False, auto: bool = False):
         """Queues the clips that need exporting (all of them if `force`). Returns at once: the work happens in the
         background, the library shows each clip's state, and more can be queued while it runs."""
         s = self._export_settings()
         if s is None or not self.project.clips:
             return
-        if (problem := exporting.output_dir_problem(s.output_dir)):
+        if (problem := exporting.output_dir_problem(s.output_dir)) and not auto:
             QMessageBox.warning(self, "Export", problem + "\nOpen Export Settings to choose a folder.")
             return
         free = [c for c in self.project.clips if self.exporter.state(c) not in ("queued", "exporting")]
-        targets = free if force else self.exporter.outstanding(free)
+        targets = free if force else self.exporter.outstanding(free, retry_failed=not auto)
         if not targets:
-            self.statusBar().showMessage("Everything is already exported.", 5000)
+            if not auto:
+                self.statusBar().showMessage("Everything is already exported.", 5000)
             return
         self.exporter.mark_queued(targets)
         track = self.project.audio_track
@@ -728,7 +757,8 @@ class MainWindow(QMainWindow):
         self.clips.model.tick()
         self._job_state.pop("export", None)
         self._refresh_job_label()
-        self.statusBar().showMessage("Export finished.", 6000)
+        if not self.project.auto_export:
+            self.statusBar().showMessage("Export finished.", 6000)
         failed = [c for c in self.project.clips if self.exporter.state(c) == "failed"]
         if failed:
             self.statusBar().showMessage(f"Export finished with {len(failed)} failed (see the library).", 10000)

@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QHBoxLayout, QHeaderView, QLabel, QPushButton,
+from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QHBoxLayout, QHeaderView, QLabel, QPushButton,
                                QTableView, QVBoxLayout, QWidget)
 
 from .editor import SAVE_STYLE
+from .titles import section_title
 from .model import Clip, ClipFilter, ClipTableModel, Project
 
 
@@ -16,6 +17,7 @@ class ClipsPanel(QWidget):
     rename_requested = Signal(str)   # tag type
     export_requested = Signal()
     export_settings_requested = Signal()
+    auto_export_toggled = Signal(bool)
 
     def __init__(self, project: Project):
         super().__init__()
@@ -46,21 +48,28 @@ class ClipsPanel(QWidget):
             b.setFocusPolicy(Qt.NoFocus)
         self.export_btn.clicked.connect(self.export_requested)
         self.export_settings_btn.clicked.connect(self.export_settings_requested)
+        self.auto_export = QCheckBox("Auto export")
+        self.auto_export.setFocusPolicy(Qt.NoFocus)
+        self.auto_export.setChecked(project.auto_export)
+        self.auto_export.toggled.connect(self.auto_export_toggled)
         self.set_export_enabled(False, "")
-        export_row = QHBoxLayout()
-        export_row.addStretch(1)
-        export_row.addWidget(self.export_settings_btn)
-        export_row.addWidget(self.export_btn)
-        foot = QHBoxLayout()
-        foot.addWidget(self.count, 1)
+        head = QHBoxLayout()
+        head.addWidget(self.count, 1)
+        head.addWidget(self.auto_export)
+        foot = QHBoxLayout()   # every library button on one row
+        foot.setSpacing(6)
         foot.addWidget(self.play)
         foot.addWidget(self.delete)
+        foot.addStretch(1)
+        foot.addWidget(self.export_settings_btn)
+        foot.addWidget(self.export_btn)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 8, 14, 0)   # space under the menu bar, and off the window frame on the right
+        lay.addWidget(section_title("Library"))
         lay.addLayout(self.filter_row)
         lay.addWidget(self.table, 1)
+        lay.addLayout(head)
         lay.addLayout(foot)
-        lay.addLayout(export_row)
         lay.addSpacing(8)
         project.structure_changed.connect(self.rebuild_filters)
         project.structure_changed.connect(self._update_count)
@@ -68,10 +77,13 @@ class ClipsPanel(QWidget):
         self.rebuild_filters()
         self._update_count()
 
-    def set_export_enabled(self, enabled: bool, tip: str):
-        """Export is the primary action, available once the project has export settings (and clips)."""
+    def set_export_enabled(self, enabled: bool, tip: str, can_auto: bool = False, auto_tip: str = ""):
+        """Export is the primary action, available once the project has export settings (and clips). Auto export
+        needs working export settings but not clips."""
         self.export_btn.setEnabled(enabled)
         self.export_btn.setToolTip(tip)
+        self.auto_export.setEnabled(can_auto or self.auto_export.isChecked())
+        self.auto_export.setToolTip(auto_tip)
 
     def _clip(self, proxy_index) -> Clip:
         return self.model.clip_at(self.proxy.mapToSource(proxy_index).row())

@@ -166,6 +166,55 @@ QTest.keyClicks(box.lineEdit(), 'Al/a:s*t?"o<r>|\\')
 assert box.lineEdit().text() == "Alastor", box.lineEdit().text()
 print("ok   the tag box refuses characters a path can't hold")
 
+# --- library buttons share one row; the panes have titles
+from PySide6.QtWidgets import QLabel
+ys = {b.mapTo(win, b.rect().center()).y() for b in (win.clips.play, win.clips.delete, win.clips.export_settings_btn, win.clips.export_btn)}
+assert max(ys) - min(ys) < 4, ys
+titles = {l.text() for l in win.findChildren(QLabel) if l.text() in ("Transcript", "Playback", "Library", "Clip Editor")}
+assert titles == {"Transcript", "Playback", "Library", "Clip Editor"}, titles
+print("ok   Play/Delete/Export Settings/Export are on one row; Transcript, Playback, Library and Clip Editor have titles")
+
+# --- auto export: ticking it exports what is outstanding, then new and changed clips follow by themselves
+def waitfor(cond, n=150):
+    for _ in range(n):
+        QTest.qWait(100)
+        if cond():
+            return True
+    return False
+assert win.clips.auto_export.isEnabled() and not win.clips.auto_export.isChecked() and not win.project.auto_export
+win.project.set_export_settings({**win.project.export_settings, "channels": 1, "bit_depth": 16})
+win.clips.auto_export.click()
+assert win.project.auto_export
+assert waitfor(lambda: all(label(c) == "✓ Exported" for c in (c1, c2, c3))), [label(c) for c in (c1, c2, c3)]
+new = add(740.0, 741.0, "Auto one", character="Husk")
+assert waitfor(lambda: label(new) == "✓ Exported"), label(new)
+assert Path(new.export_path).exists() and Path(new.export_path).name == "Husk_003_Auto one.wav".replace("003", "%03d" % new.id)
+old = new.export_path
+new.text = "Auto two"; new.end = 741.5; win.project.touch(new)
+assert waitfor(lambda: label(new) == "✓ Exported" and new.export_path != old), (label(new), new.export_path)
+assert not Path(old).exists()
+bad = add(99999.0, 99999.5, "Nowhere", character="Husk")
+assert waitfor(lambda: label(bad) == "✗ Failed")
+tries = []
+orig = win.exporter.submit
+win.exporter.submit = lambda *a, **k: (tries.append(1), orig(*a, **k))[1]
+win.project.touch(c1); QTest.qWait(1500)     # unrelated change: the failed clip is not retried
+assert not tries and label(bad) == "✗ Failed", tries
+win.exporter.submit = orig
+bad.start, bad.end = 700.0, 701.0; win.project.touch(bad)   # edited: now it is tried again, and works
+assert waitfor(lambda: label(bad) == "✓ Exported")
+win.project.remove(bad)
+win.clips.auto_export.click()
+assert not win.project.auto_export
+late = add(750.0, 751.0, "Not auto", character="Husk")
+QTest.qWait(1500)
+assert label(late) == "", label(late)
+win.project.remove(late)
+win.project.save(); assert '"auto_export": false' in Path(win.project.path).read_text()
+win.clips.auto_export.click()   # leave it on: saved with the project
+QTest.qWait(300)
+print("ok   Auto export: exports outstanding clips when ticked, then new and edited clips by itself; failed clips retry only after an edit; off again does nothing")
+
 # --- the states survive closing and reopening; a deleted file shows as not exported
 win.project.save()
 Path(c3.export_path).unlink()

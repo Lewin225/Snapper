@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QHBoxLayout, QLabel, QPlain
 
 from .model import BOOL, INT, STRING, Clip, Project
 from .pathnames import INVALID_HELP, VALID_INPUT_PATTERN, clean_tag
+from .titles import section_title
 from .scrubber import TimeScrubber
 from .waveform import WaveformWidget
 
@@ -104,6 +105,7 @@ class ClipEditor(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(14, 10, 14, 12)
         lay.setSpacing(10)
+        lay.addWidget(section_title("Clip Editor"))
         lay.addWidget(self.wave, 1)
         lay.addLayout(marks)
         lay.addLayout(self.tag_row)
