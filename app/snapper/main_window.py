@@ -82,7 +82,9 @@ class MainWindow(QMainWindow):
         self._audio_job: Optional[media.FfmpegJob] = None
         self.sub_labels: dict[int, str] = {}
         self._proxy_job: Optional[media.FfmpegJob] = None
-        self._export_worker: Optional[exporting.ExportWorker] = None
+        self.exporter = exporting.ExportManager(self.project, self)
+        self._spinner = QTimer(self, interval=150)   # animates the 'Exporting' marker in the library
+        self._pcm_waiters: dict[Path, list] = {}   # decoded audio being prepared -> who is waiting for it
         self._on_proxy = False
 
         # --- widgets
@@ -183,6 +185,11 @@ class MainWindow(QMainWindow):
         self.clips.export_requested.connect(self.export_clips)
         self.clips.export_settings_requested.connect(self.edit_export_settings)
         self.project.dirty.connect(self._update_export_state)
+        self.clips.model.export_status = self.exporter.status
+        self._spinner.timeout.connect(self.clips.model.tick)
+        self.exporter.state_changed.connect(self._export_state_changed)
+        self.exporter.progress.connect(self._export_progress)
+        self.exporter.idle.connect(self._export_idle)
         self.project.structure_changed.connect(self._update_export_state)
         self.project.structure_changed.connect(self.on_structure_changed)
         self.project.value_renamed.connect(self._renamed)
@@ -266,7 +273,8 @@ class MainWindow(QMainWindow):
         g = m.addMenu("T&ags")
         self._action(g, "Add tag type…", self.add_tag_type)
         e = m.addMenu("&Export")
-        self.act_export = self._action(e, "Export…", self.export_clips)
+        self.act_export = self._action(e, "Export new and changed clips", lambda: self.export_clips())
+        self.act_export_all = self._action(e, "Re-export all clips", lambda: self.export_clips(force=True))
         self._action(e, "Export settings…", self.edit_export_settings)
 
     def reset_layout(self):
@@ -307,6 +315,8 @@ class MainWindow(QMainWindow):
         return a
 
     def _start_media(self):
+        media.purge_old_export_audio()
+        self.exporter.verify_files()
         self._fill_audio_combo()
         self._load_audio()
         self._survey_subtitles()
@@ -459,7 +469,7 @@ class MainWindow(QMainWindow):
             return
         self.set_transcript(Transcript(parse_srt(path.read_text(encoding="utf-8", errors="replace"))), persist=True)
 
-    def _run_job(self, job: media.FfmpegJob, name: str, on_ok):
+    def _run_job(self, job: media.FfmpegJob, name: str, on_ok, on_fail=None):
         self.jobs.append(job)
         state = self._job_state
         state[name] = 0.0
@@ -474,6 +484,8 @@ class MainWindow(QMainWindow):
                 on_ok()
             else:
                 self.statusBar().showMessage(f"{name} failed: {err[:200]}", 10000)
+                if on_fail:
+                    on_fail(err[:200])
                 if name == "proxy":
                     self._proxy_job = None
                     self.proxy_banner.clear()
@@ -637,73 +649,89 @@ class MainWindow(QMainWindow):
             self.player.play_range(c.start, c.end)
 
     # ------------------------------------------------------------------ export
+    def _export_settings(self) -> Optional[exporting.ExportSettings]:
+        return self.exporter.settings()
+
     def _update_export_state(self, *_):
-        s, running = self.project.export_settings, self._export_worker is not None or "export" in self._job_state \
-            or "pcm" in self._job_state
+        s = self._export_settings()
         if s is None:
             enabled, tip = False, "Set up Export Settings first."
+        elif exporting.output_dir_problem(s.output_dir):
+            enabled, tip = False, "Choose the export folder in Export Settings."
         elif not self.project.clips:
             enabled, tip = False, "There are no clips in the library to export."
-        elif running:
-            enabled, tip = False, "An export is already running."
         else:
-            enabled, tip = True, "Export every clip in the library using the export settings."
+            enabled, tip = True, "Export the clips that are new or changed since they were last exported."
         self.clips.set_export_enabled(enabled, tip)
         self.act_export.setEnabled(enabled)
+        self.act_export_all.setEnabled(enabled)
 
     def edit_export_settings(self):
         dlg = ExportSettingsDialog(self.project, self)
         if dlg.exec():
             self.project.set_export_settings(dlg.settings().to_json())
+            self.exporter.verify_files()
 
-    def export_clips(self):
-        if self.project.export_settings is None or not self.project.clips or self._export_worker is not None:
+    def export_clips(self, force: bool = False):
+        """Queues the clips that need exporting (all of them if `force`). Returns at once: the work happens in the
+        background, the library shows each clip's state, and more can be queued while it runs."""
+        s = self._export_settings()
+        if s is None or not self.project.clips:
             return
-        s = exporting.ExportSettings.from_json(self.project.export_settings)
-        last = QSettings("snapper", "snapper").value("export/last_dir", str(self.media_path.parent))
-        folder = QFileDialog.getExistingDirectory(self, "Export clips to…", str(last))
-        if not folder:
+        if (problem := exporting.output_dir_problem(s.output_dir)):
+            QMessageBox.warning(self, "Export", problem + "\nOpen Export Settings to choose a folder.")
             return
-        QSettings("snapper", "snapper").setValue("export/last_dir", folder)
+        free = [c for c in self.project.clips if self.exporter.state(c) not in ("queued", "exporting")]
+        targets = free if force else self.exporter.outstanding(free)
+        if not targets:
+            self.statusBar().showMessage("Everything is already exported.", 5000)
+            return
+        self.exporter.mark_queued(targets)
         track = self.project.audio_track
+        self._with_export_audio(
+            s, track,
+            lambda path: self.exporter.submit(targets, s, path),
+            lambda err: self.exporter.cancel_queued(targets, f"Could not prepare the audio: {err}"))
+
+    def _with_export_audio(self, s, track: int, ok, fail):
+        """Calls ok(path) once the decoded audio for these export settings exists (decoding it first if needed)."""
         path = media.export_pcm_path(self.media_path, track, s.channels, s.sample_rate, s.bit_depth)
         if path.exists():
-            self._run_export(s, path, Path(folder))
+            ok(path)
             return
+        waiters = self._pcm_waiters.get(path)
+        if waiters is not None:   # already being decoded for an earlier request
+            waiters.append((ok, fail))
+            return
+        self._pcm_waiters[path] = [(ok, fail)]
         job = media.pcm_job(self.info, self.info.duration, track, s.channels, s.sample_rate, s.bit_depth)
-        self._run_job(job, "pcm", lambda: self._run_export(s, path, Path(folder)))
-        self._update_export_state()
 
-    def _run_export(self, s, pcm_path: Path, folder: Path):
-        pcm = media.open_pcm(pcm_path, s.channels, s.bit_depth)
-        worker = exporting.ExportWorker(self.project, s, pcm, folder, self)
-        self._export_worker = worker
-        self._job_state["export"] = 0.0
+        def finished(good: bool, err: str = ""):
+            for o, f in self._pcm_waiters.pop(path, []):
+                o(path) if good else f(err)
+        self._run_job(job, "pcm", lambda: finished(True), lambda err: finished(False, err))
+
+    def _export_state_changed(self, clip_id: int):
+        self.clips.model.refresh_clip(clip_id)
+        if self.exporter.busy():
+            if "export" not in self._job_state:
+                self._job_state["export"] = 0.0
+                self._refresh_job_label()
+            self._spinner.start()
+
+    def _export_progress(self, fraction: float):
+        self._job_state["export"] = fraction
         self._refresh_job_label()
-        worker.progress.connect(lambda p: self._job_progress("export", p))
-        worker.finished_with.connect(lambda res, err: self._export_done(res, err, folder, pcm_path, s))
-        worker.start()
-        self._update_export_state()
 
-    def _export_done(self, res, err: str, folder: Path, pcm_path: Path, s):
-        self._export_worker = None
+    def _export_idle(self):
+        self._spinner.stop()
+        self.clips.model.tick()
         self._job_state.pop("export", None)
         self._refresh_job_label()
-        if pcm_path != media.audio_path(self.media_path, self.project.audio_track):
-            try:
-                pcm_path.unlink()   # a temporary decode; the waveform's own audio is kept
-            except OSError:
-                pass
-        self._update_export_state()
-        if err:
-            QMessageBox.warning(self, "Export failed", err)
-            return
-        msg = f"Exported {len(res.files)} clips to {folder}"
-        if res.cancelled:
-            msg = "Export cancelled. " + msg
-        self.statusBar().showMessage(msg, 15000)
-        if res.skipped:
-            QMessageBox.warning(self, "Export", msg + "\n\nSkipped:\n" + "\n".join(res.skipped[:15]))
+        self.statusBar().showMessage("Export finished.", 6000)
+        failed = [c for c in self.project.clips if self.exporter.state(c) == "failed"]
+        if failed:
+            self.statusBar().showMessage(f"Export finished with {len(failed)} failed (see the library).", 10000)
 
     # ------------------------------------------------------------------ tags
     def add_tag_type(self):
@@ -851,9 +879,8 @@ class MainWindow(QMainWindow):
             j.kill()
         if self.transcript_job:
             self.transcript_job.kill()
-        if self._export_worker:
-            self._export_worker.cancel()
-            self._export_worker.wait(5000)
+        self.exporter.shutdown()
+        media.remove_export_audio(self.media_path)
         self.video.close()
         self.player.shutdown()
         super().closeEvent(e)

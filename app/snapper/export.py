@@ -6,8 +6,10 @@ waveform is what is exported.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import queue
 import re
 import struct
 from dataclasses import asdict, dataclass, field, replace
@@ -15,8 +17,9 @@ from pathlib import Path
 from typing import Callable, Optional
 
 import numpy as np
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QObject, QThread, Signal
 
+from . import media as media_cache
 from .model import BOOL, Clip, Project, tag_text
 from .pathnames import clean_part, has_invalid_chars
 
@@ -33,6 +36,7 @@ _TOKEN_RE = re.compile(r"\{([^{}]*)\}")
 
 @dataclass
 class ExportSettings:
+    output_dir: str = ""                 # where the files go; chosen in the settings dialog
     name_template: str = DEFAULT_TEMPLATE
     format: str = "wav"
     channels: int = 1                    # 1 = mono, 2 = stereo
@@ -60,6 +64,18 @@ class ExportSettings:
         if s.text_field not in WAV_TEXT_FIELDS:
             s.text_field = None
         return s
+
+
+def output_dir_problem(path: str) -> Optional[str]:
+    """Why `path` cannot be the export folder, or None if clips can be written there."""
+    if not path.strip():
+        return "Choose the folder the clips are exported to."
+    d = Path(path)
+    if not d.is_dir():
+        return "That folder does not exist."
+    if not os.access(d, os.W_OK):
+        return "That folder is not writable."
+    return None
 
 
 # --------------------------------------------------------------------------- naming
@@ -104,22 +120,36 @@ def folder_for(clip: Clip, project: Project, folder_tags: list[str]) -> list[str
 
 
 def plan_files(project: Project, settings: ExportSettings, clips: Optional[list[Clip]] = None) -> list[tuple[Clip, Path]]:
-    """Where each clip goes, relative to the export folder. Names are made safe, and clashes (compared
-    case-insensitively, as some file systems do) get _2, _3... added."""
-    clips = [c for c in (clips if clips is not None else project.clips) if c.start is not None and c.end is not None]
-    digits = max(3, len(str(len(clips))))
+    """Where each clip goes, relative to the export folder. `{n}` is the clip's number (its id), so a clip's name
+    does not change when other clips are added, removed or reordered. Names are made safe, and clashes (compared
+    case-insensitively, as some file systems do) get _2, _3... added, always in clip-number order so existing
+    clips keep their names when a new clip clashes with them. Planned over the whole library, then filtered
+    to `clips`."""
+    everyone = sorted((c for c in project.clips if c.start is not None and c.end is not None and c.id is not None),
+                      key=lambda c: c.id)
+    wanted = None if clips is None else {c.id for c in clips}
     used: set[str] = set()
     out = []
-    for n, c in enumerate(clips, 1):
-        stem = clean_part(render_name(settings.name_template, c, project, n, digits)) or f"clip_{n}"
+    for c in everyone:
+        stem = clean_part(render_name(settings.name_template, c, project, c.id, 3)) or f"clip_{c.id}"
         rel = Path(*folder_for(c, project, settings.folder_tags))
         name, k = stem, 2
         while str(rel / (name + ".wav")).lower() in used:
             name = f"{stem}_{k}"
             k += 1
         used.add(str(rel / (name + ".wav")).lower())
-        out.append((c, rel / f"{name}.{settings.format}"))
+        if wanted is None or c.id in wanted:
+            out.append((c, rel / f"{name}.{settings.format}"))
     return out
+
+
+def export_signature(clip: Clip, settings: ExportSettings, track: int) -> str:
+    """Identifies everything that decides a clip's exported file. If it differs from the signature stored when the
+    clip was exported, the file is out of date."""
+    payload = {"start": clip.start, "end": clip.end, "track": track, "settings": settings.to_json(),
+               "text": clip.text if settings.text_field else None,
+               "tags": clip.tags if (settings.embed_tags or settings.folder_tags or "{" in settings.name_template) else None}
+    return hashlib.sha1(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()[:16]
 
 
 # --------------------------------------------------------------------------- WAV
@@ -189,7 +219,7 @@ def read_wav(path: Path) -> dict:
     return out
 
 
-# --------------------------------------------------------------------------- the run
+# --------------------------------------------------------------------------- writing
 @dataclass
 class ExportResult:
     files: list[Path] = field(default_factory=list)
@@ -203,33 +233,59 @@ def clip_frames(pcm: np.ndarray, rate: int, clip: Clip) -> np.ndarray:
     return np.asarray(pcm[max(i0, 0):min(i1, len(pcm))])
 
 
+def write_one(clip: Clip, rel: Path, tag_kinds: dict[str, str], settings: ExportSettings, pcm: np.ndarray,
+              out_dir: Path) -> Path:
+    """Writes one clip to out_dir/rel and returns the file's path. Raises ValueError if the clip cannot be written."""
+    out_dir = out_dir.resolve()
+    target = (out_dir / rel).resolve()
+    if out_dir not in target.parents:   # names are sanitised already; this is the last line of defence
+        raise ValueError(f"{rel}: outside the export folder")
+    frames = clip_frames(pcm, settings.sample_rate, clip)
+    if len(frames) == 0:
+        raise ValueError(f"{rel}: no audio in this time range")
+    info_id = WAV_TEXT_FIELDS.get(settings.text_field or "")
+    info = {info_id: clip.text} if info_id and clip.text else None
+    tags = {t: (True if tag_kinds.get(t) == BOOL else v) for t, v in clip.tags.items()} if settings.embed_tags else None
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_name(target.name + ".tmp")
+    tmp.write_bytes(wav_bytes(frames, settings.sample_rate, settings.bit_depth, info, tags))
+    os.replace(tmp, target)
+    return target
+
+
+def remove_exported(old: Path, out_dir: Path):
+    """Deletes a clip's earlier export (it moved or was renamed) and any folders that became empty, never going
+    above out_dir and never touching anything outside it."""
+    out_dir = out_dir.resolve()
+    try:
+        old = old.resolve()
+    except OSError:
+        return
+    if out_dir not in old.parents:
+        return
+    old.unlink(missing_ok=True)
+    d = old.parent
+    while d != out_dir:
+        try:
+            d.rmdir()   # only succeeds while empty
+        except OSError:
+            break
+        d = d.parent
+
+
 def write_plan(plan: list[tuple[Clip, Path]], tag_kinds: dict[str, str], settings: ExportSettings, pcm: np.ndarray,
                out_dir: Path, progress: Optional[Callable[[float], None]] = None,
                cancelled: Callable[[], bool] = lambda: False) -> ExportResult:
-    """Writes the planned clips under `out_dir`. `pcm` is the decoded audio at the settings' rate/channels/depth."""
+    """Writes a whole plan (a batch export). `pcm` is the decoded audio at the settings' rate/channels/depth."""
     result = ExportResult()
-    out_dir = out_dir.resolve()
-    info_id = WAV_TEXT_FIELDS.get(settings.text_field or "")
     for i, (clip, rel) in enumerate(plan):
         if cancelled():
             result.cancelled = True
             break
-        target = (out_dir / rel).resolve()
-        if out_dir not in target.parents:   # names are sanitised already; this is the last line of defence
-            result.skipped.append(f"{rel}: outside the export folder")
-            continue
-        frames = clip_frames(pcm, settings.sample_rate, clip)
-        if len(frames) == 0:
-            result.skipped.append(f"{rel}: no audio in this time range")
-            continue
-        info = {info_id: clip.text} if info_id and clip.text else None
-        tags = {t: (True if tag_kinds.get(t) == BOOL else v) for t, v in clip.tags.items()} \
-            if settings.embed_tags else None
-        target.parent.mkdir(parents=True, exist_ok=True)
-        tmp = target.with_name(target.name + ".tmp")
-        tmp.write_bytes(wav_bytes(frames, settings.sample_rate, settings.bit_depth, info, tags))
-        os.replace(tmp, target)
-        result.files.append(target)
+        try:
+            result.files.append(write_one(clip, rel, tag_kinds, settings, pcm, out_dir))
+        except ValueError as e:
+            result.skipped.append(str(e))
         if progress:
             progress((i + 1) / len(plan))
     return result
@@ -241,25 +297,165 @@ def export_clips(project: Project, settings: ExportSettings, pcm: np.ndarray, ou
     return write_plan(plan_files(project, settings), dict(project.tag_kinds), settings, pcm, out_dir, progress, cancelled)
 
 
-class ExportWorker(QThread):
-    """Runs export_clips off the UI thread."""
-    progress = Signal(float)
-    finished_with = Signal(object, str)   # (ExportResult or None, error text)
+# --------------------------------------------------------------------------- the background queue
+class _Worker(QThread):
+    """Writes queued clips one at a time, off the UI thread."""
+    started_clip = Signal(int)
+    finished_clip = Signal(int, bool, str)   # clip id, ok, file path or error text
 
-    def __init__(self, project: Project, settings: ExportSettings, pcm: np.ndarray, out_dir: Path, parent=None):
+    def __init__(self, parent=None):
         super().__init__(parent)
-        # A snapshot taken now, on the UI thread: the library may be edited while the export runs.
-        plan = [(replace(c, tags=dict(c.tags)), rel) for c, rel in plan_files(project, settings)]
-        self._args = (plan, dict(project.tag_kinds), settings, pcm, out_dir)
-        self._cancel = False
-
-    def cancel(self):
-        self._cancel = True
+        self.jobs: queue.Queue = queue.Queue()
+        self._pcm: dict[str, np.ndarray] = {}
 
     def run(self):
-        try:
-            res = write_plan(*self._args, progress=self.progress.emit, cancelled=lambda: self._cancel)
-        except Exception as e:   # disk full, permission denied...
-            self.finished_with.emit(None, f"{type(e).__name__}: {e}")
-            return
-        self.finished_with.emit(res, "")
+        while True:
+            job = self.jobs.get()
+            if job is None:
+                return
+            clip, rel, kinds, settings, pcm_path, old = job
+            self.started_clip.emit(clip.id)
+            try:
+                if pcm_path not in self._pcm:
+                    self._pcm[pcm_path] = media_cache.open_pcm(Path(pcm_path), settings.channels, settings.bit_depth)
+                out_dir = Path(settings.output_dir)
+                target = write_one(clip, rel, kinds, settings, self._pcm[pcm_path], out_dir)
+                if old and Path(old).resolve() != target:
+                    remove_exported(Path(old), out_dir)
+                self.finished_clip.emit(clip.id, True, str(target))
+            except Exception as e:   # bad time range, disk full, permission denied...
+                self.finished_clip.emit(clip.id, False, str(e) if isinstance(e, ValueError) else f"{type(e).__name__}: {e}")
+
+
+class ExportManager(QObject):
+    """Exports clips in the background and remembers each clip's state, so the library can show which clip is
+    queued, exporting, done, changed since, or failed. Clips can be added at any time, even while it is working."""
+    state_changed = Signal(int)    # a clip's state changed (clip id)
+    progress = Signal(float)       # fraction of the current batch written
+    idle = Signal()                # nothing queued or running any more
+
+    def __init__(self, project: Project, parent=None):
+        super().__init__(parent)
+        self.project = project
+        self._transient: dict[int, tuple[str, str]] = {}   # clip id -> (queued|exporting|failed, message)
+        self._sig: dict[int, str] = {}
+        self._sigs_at_submit: dict[int, str] = {}   # clip id -> signature when it was queued
+        self._settings: Optional[tuple[int, ExportSettings]] = None
+        self._worker: Optional[_Worker] = None
+        self._pending = 0     # submitted and not finished
+        self._batch_total = 0
+        self._batch_done = 0
+        for sig in (project.dirty, project.structure_changed, project.clip_changed):
+            sig.connect(self._invalidate)
+
+    # --- state
+    def _invalidate(self, *_):
+        self._sig.clear()
+        self._settings = None
+
+    def settings(self) -> Optional[ExportSettings]:
+        d = self.project.export_settings
+        if d is None:
+            return None
+        if self._settings is None or self._settings[0] != id(d):
+            self._settings = (id(d), ExportSettings.from_json(d))
+        return self._settings[1]
+
+    def current_signature(self, clip: Clip) -> Optional[str]:
+        s = self.settings()
+        if s is None:
+            return None
+        if clip.id not in self._sig:
+            self._sig[clip.id] = export_signature(clip, s, self.project.audio_track)
+        return self._sig[clip.id]
+
+    def state(self, clip: Clip) -> str:
+        if clip.id in self._transient:
+            return self._transient[clip.id][0]
+        if clip.export_sig:
+            return "done" if clip.export_sig == self.current_signature(clip) else "changed"
+        return "none"
+
+    def status(self, clip: Clip) -> tuple[str, str]:
+        st = self.state(clip)
+        if clip.id in self._transient:
+            return st, self._transient[clip.id][1]
+        tips = {"done": f"Exported to {clip.export_path}", "none": "Not exported yet",
+                "changed": "Changed since it was exported (or the export settings changed). Export again to update it."}
+        return st, tips.get(st, "")
+
+    def outstanding(self, clips: list[Clip]) -> list[Clip]:
+        """Clips that still need exporting: never exported, changed since, or failed last time."""
+        return [c for c in clips if self.state(c) in ("none", "changed", "failed")]
+
+    def verify_files(self):
+        """Forgets exports whose file has been deleted since (so they show as not exported)."""
+        for c in self.project.clips:
+            if c.export_sig and c.export_path and not Path(c.export_path).exists():
+                c.export_sig = c.export_path = None
+                self.state_changed.emit(c.id)
+
+    # --- queue
+    def mark_queued(self, clips: list[Clip]):
+        for c in clips:
+            self._transient[c.id] = ("queued", "Waiting to be exported")
+            self.state_changed.emit(c.id)
+        self._batch_total += len(clips)
+        self._pending += len(clips)
+
+    def cancel_queued(self, clips: list[Clip], reason: str):
+        """The audio for these clips could not be prepared."""
+        for c in clips:
+            self._transient[c.id] = ("failed", reason)
+            self.state_changed.emit(c.id)
+        self._pending -= len(clips)
+        self._batch_done += len(clips)
+        self._check_idle()
+
+    def submit(self, clips: list[Clip], settings: ExportSettings, pcm_path: Path):
+        """Queues clips (already marked queued) for writing. `pcm_path` is the decoded audio matching `settings`."""
+        if self._worker is None:
+            self._worker = _Worker(self)
+            self._worker.started_clip.connect(self._on_started)
+            self._worker.finished_clip.connect(self._on_finished)
+            self._worker.start()
+        plan = {c.id: rel for c, rel in plan_files(self.project, settings, clips)}
+        kinds = dict(self.project.tag_kinds)
+        for c in clips:
+            snap = replace(c, tags=dict(c.tags))   # the clip may be edited while it waits
+            self._sigs_at_submit[c.id] = export_signature(c, settings, self.project.audio_track)
+            self._worker.jobs.put((snap, plan[c.id], kinds, settings, str(pcm_path), c.export_path))
+
+    def _on_started(self, clip_id: int):
+        self._transient[clip_id] = ("exporting", "Exporting…")
+        self.state_changed.emit(clip_id)
+
+    def _on_finished(self, clip_id: int, ok: bool, info: str):
+        clip = next((c for c in self.project.clips if c.id == clip_id), None)
+        if ok:
+            self._transient.pop(clip_id, None)
+            if clip is not None:
+                clip.export_sig = self._sigs_at_submit.get(clip_id)
+                clip.export_path = info
+                self.project.dirty.emit()
+        else:
+            self._transient[clip_id] = ("failed", info)
+        self._pending -= 1
+        self._batch_done += 1
+        self.state_changed.emit(clip_id)
+        self.progress.emit(self._batch_done / max(self._batch_total, 1))
+        self._check_idle()
+
+    def _check_idle(self):
+        if self._pending <= 0:
+            self._pending = self._batch_total = self._batch_done = 0
+            self.idle.emit()
+
+    def busy(self) -> bool:
+        return self._pending > 0
+
+    def shutdown(self):
+        if self._worker is not None:
+            self._worker.jobs.put(None)
+            self._worker.wait(10000)
+            self._worker = None

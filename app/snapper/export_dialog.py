@@ -3,12 +3,14 @@ from __future__ import annotations
 
 from typing import Optional
 
+from pathlib import Path
+
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QGroupBox, QHBoxLayout,
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
                                QLabel, QLineEdit, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout)
 
 from .export import (DEFAULT_TEMPLATE, FORMATS, SAMPLE_RATES, TOKENS, WAV_BIT_DEPTHS, WAV_TEXT_FIELDS, ExportSettings,
-                     plan_files, template_problem)
+                     output_dir_problem, plan_files, template_problem)
 from .model import Project
 
 FORMAT_LABELS = {"wav": "WAV"}
@@ -26,6 +28,17 @@ class ExportSettingsDialog(QDialog):
         # tags that no longer exist cannot be folders
         cur.folder_tags = [t for t in cur.folder_tags if t in project.tag_kinds]
 
+        self.folder = QLineEdit(cur.output_dir)
+        self.folder.setPlaceholderText("Choose where the clips are exported to")
+        self.folder.setReadOnly(True)   # picked with the system folder dialog, which is what grants access in a sandbox
+        browse = QPushButton("Browse…")
+        browse.clicked.connect(self._browse)
+        self.folder_row = QHBoxLayout()
+        self.folder_row.addWidget(self.folder, 1)
+        self.folder_row.addWidget(browse)
+        self.folder_msg = QLabel()
+        self.folder_msg.setWordWrap(True)
+        self.folder_msg.setStyleSheet("color: #c0392b;")
         self.template = QLineEdit(cur.name_template)
         self.template.setToolTip("Fields: " + ", ".join("{%s}" % t for t in (*TOKENS, *project.tag_types)))
         self.template_msg = QLabel()
@@ -86,6 +99,8 @@ class ExportSettingsDialog(QDialog):
         self.embed_tags.setToolTip("Written as JSON in a custom 'snpr' chunk of the WAV file.")
 
         form = QFormLayout()
+        form.addRow("Export folder", self.folder_row)
+        form.addRow("", self.folder_msg)
         form.addRow("File name", self.template)
         form.addRow("", self.template_msg)
         form.addRow("", self.example)
@@ -100,7 +115,7 @@ class ExportSettingsDialog(QDialog):
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
         reset = QPushButton("Defaults")
-        reset.clicked.connect(lambda: self._load(ExportSettings()))
+        reset.clicked.connect(lambda: self._load(ExportSettings(output_dir=self.folder.text())))
         self.buttons.addButton(reset, QDialogButtonBox.ResetRole)
         lay = QVBoxLayout(self)
         lay.addLayout(form)
@@ -113,6 +128,13 @@ class ExportSettingsDialog(QDialog):
         self.format.currentIndexChanged.connect(self._format_changed)
         self._load(cur)
 
+    def _browse(self):
+        start = self.folder.text() if Path(self.folder.text()).is_dir() else str(Path.home())
+        chosen = QFileDialog.getExistingDirectory(self, "Export clips to…", start)
+        if chosen:
+            self.folder.setText(chosen)
+            self._refresh()
+
     def _format_changed(self, *_):
         wav = self.format.currentData() == "wav"
         self.bits.setVisible(wav)
@@ -123,6 +145,7 @@ class ExportSettingsDialog(QDialog):
         combo.setCurrentIndex(max(0, combo.findData(data)))
 
     def _load(self, s: ExportSettings):
+        self.folder.setText(s.output_dir)
         self.template.setText(s.name_template)
         self._set(self.format, s.format)
         self._set(self.channels, s.channels)
@@ -157,7 +180,7 @@ class ExportSettingsDialog(QDialog):
         tags = [self.folder_list.item(i).data(Qt.UserRole) for i in range(self.folder_list.count())
                 if self.folder_list.item(i).checkState() == Qt.Checked]
         return ExportSettings(
-            name_template=self.template.text().strip() or DEFAULT_TEMPLATE, format=self.format.currentData(),
+            output_dir=self.folder.text(), name_template=self.template.text().strip() or DEFAULT_TEMPLATE, format=self.format.currentData(),
             channels=self.channels.currentData(), sample_rate=self.rate.currentData(),
             bit_depth=self.bits.currentData(), folder_tags=tags, text_field=self.text_field.currentData(),
             embed_tags=self.embed_tags.isChecked())
@@ -167,7 +190,10 @@ class ExportSettingsDialog(QDialog):
         problem = template_problem(self.template.text(), self.project.tag_types)
         self.template_msg.setText(problem or "")
         self.template_msg.setVisible(bool(problem))
-        self.buttons.button(QDialogButtonBox.Ok).setEnabled(problem is None)
+        folder_problem = output_dir_problem(self.folder.text())
+        self.folder_msg.setText(folder_problem or "")
+        self.folder_msg.setVisible(bool(folder_problem))
+        self.buttons.button(QDialogButtonBox.Ok).setEnabled(problem is None and folder_problem is None)
         if problem is None and self.project.clips:
             c, rel = plan_files(self.project, s, self.project.clips[:1])[0]
             self.example.setText(f"First clip: {rel}")

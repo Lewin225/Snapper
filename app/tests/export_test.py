@@ -92,7 +92,7 @@ settings = ExportSettings(name_template="c{n}", text_field="title", embed_tags=T
 out = mk()
 res = export_clips(p2, settings, wave_pcm, out)
 assert len(res.files) == 5 and not res.skipped, res
-for f, c in zip(res.files, p2.clips):
+for f, (c, _rel) in zip(res.files, plan_files(p2, settings)):   # files come back in clip-number order
     w = read_wav(f)
     i0, i1 = int(round(c.start * 44100)), min(int(round(c.end * 44100)), len(wave_pcm))
     assert np.array_equal(w["frames"], wave_pcm[i0:i1]), f"{f.name}: samples differ from the waveform"

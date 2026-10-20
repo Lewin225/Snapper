@@ -50,7 +50,7 @@ p.add(Clip(5.0, 6.0, "c", True, {"character": "Husk", "overlap": True}))
 assert p.values("character") == ["Alastor", "Husk"] and "loudness" not in p.tag_values
 assert p.filter_values("overlap") == ["Yes", "No"] and p.filter_values("loudness") == ["3", "5"]
 model = ClipTableModel(p); flt = ClipFilter(model)
-assert "Flags" not in model.columns() and model.columns() == ["#", "In", "Dur", "character", "loudness", "overlap", "Text"]
+assert "Flags" not in model.columns() and model.columns() == ["#", "In", "Dur", "character", "loudness", "overlap", "Text", "Export"]
 def shown(): return [flt.index(r, 0).data() for r in range(flt.rowCount())]
 assert shown() == [1, 2, 3]
 flt.set_filter("overlap", "Yes"); assert shown() == [1, 3]

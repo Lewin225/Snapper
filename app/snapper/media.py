@@ -262,3 +262,20 @@ def extract_subtitle(media: Path, order: int) -> Path:
         subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", str(media), "-map", f"0:s:{order}",
                         "-c:s", "srt", "-f", "srt", str(out)], check=True)
     return out
+
+
+def remove_export_audio(media: Path):
+    """Deletes this video's temporary export decodes (the waveform's own audio is kept)."""
+    for f in cache_dir(media).glob("export_*.pcm"):
+        f.unlink(missing_ok=True)
+
+
+def purge_old_export_audio(max_age_s: float = 86400.0):
+    """Removes export decodes left behind by a crash: anything not touched for a day."""
+    import time
+    for f in CACHE_ROOT.glob("*/export_*.pcm"):
+        try:
+            if time.time() - f.stat().st_mtime > max_age_s:
+                f.unlink()
+        except OSError:
+            pass

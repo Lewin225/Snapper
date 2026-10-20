@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QObject, QSortFilterProxyModel, Qt, Signal
+from PySide6.QtGui import QColor
 
 from . import media as media_cache
 from .pathnames import INVALID_HELP, clean_tag
@@ -27,6 +28,8 @@ class Clip:
     text_auto: bool = True  # text follows the transcript until the user edits it
     tags: dict[str, Any] = field(default_factory=dict)  # string -> str, int -> int, bool -> True (absent = off)
     id: Optional[int] = None
+    export_sig: Optional[str] = None   # what was last exported for this clip (see export.export_signature) ...
+    export_path: Optional[str] = None  # ... and where the file went
 
     @property
     def duration(self) -> float:
@@ -34,12 +37,13 @@ class Clip:
 
     def to_json(self) -> dict:
         return {"id": self.id, "start": self.start, "end": self.end, "text": self.text,
-                "text_auto": self.text_auto, "tags": self.tags}
+                "text_auto": self.text_auto, "tags": self.tags,
+                "export_sig": self.export_sig, "export_path": self.export_path}
 
     @staticmethod
     def from_json(d: dict) -> "Clip":
         return Clip(d["start"], d["end"], d.get("text", ""), d.get("text_auto", True),
-                    dict(d.get("tags", {})), d["id"])
+                    dict(d.get("tags", {})), d["id"], d.get("export_sig"), d.get("export_path"))
 
 
 class Project(QObject):
@@ -245,10 +249,18 @@ def tag_text(project: Project, clip: Clip, tag: str) -> str:
     return "" if v is None else str(v)
 
 
+EXPORT_LABELS = {"done": "✓ Exported", "exporting": "◐ Exporting", "queued": "⋯ Queued", "changed": "● Changed",
+                 "failed": "✗ Failed"}
+SPINNER = "◐◓◑◒"
+EXPORT_COLORS = {"done": "#2e9e5b", "failed": "#d04437", "changed": "#d98b1f"}
+
+
 class ClipTableModel(QAbstractTableModel):
     def __init__(self, project: Project):
         super().__init__()
         self.p = project
+        self.export_status = None   # callable(Clip) -> (state, tooltip), set by whoever runs exports
+        self._spin = 0              # frame of the 'exporting' marker's animation
         project.structure_changed.connect(self._reset)
         project.clip_changed.connect(self._row_changed)
 
@@ -260,8 +272,23 @@ class ClipTableModel(QAbstractTableModel):
         r = self.p.clips.index(clip)
         self.dataChanged.emit(self.index(r, 0), self.index(r, self.columnCount() - 1))
 
+    def tick(self):
+        """Advances the 'exporting' marker's animation."""
+        self._spin += 1
+        if self.rowCount():
+            col = self.columns().index("Export")
+            self.dataChanged.emit(self.index(0, col), self.index(self.rowCount() - 1, col))
+
+    def refresh_clip(self, clip_id: int):
+        """The export state of one clip changed: repaint its Export cell."""
+        for r, c in enumerate(self.p.clips):
+            if c.id == clip_id:
+                col = self.columns().index("Export")
+                self.dataChanged.emit(self.index(r, col), self.index(r, col))
+                return
+
     def columns(self) -> list[str]:
-        return ["#", "In", "Dur", *self.p.tag_types, "Text"]
+        return ["#", "In", "Dur", *self.p.tag_types, "Text", "Export"]
 
     def rowCount(self, parent=QModelIndex()):
         return 0 if parent.isValid() else len(self.p.clips)
@@ -277,9 +304,20 @@ class ClipTableModel(QAbstractTableModel):
         return self.p.clips[row]
 
     def data(self, index, role=Qt.DisplayRole):
+        c, col = self.p.clips[index.row()], self.columns()[index.column()]
+        if col == "Export":
+            state, tip = self.export_status(c) if self.export_status else ("none", "")
+            if role == Qt.DisplayRole:
+                if state == "exporting":
+                    return SPINNER[self._spin % len(SPINNER)] + " Exporting"
+                return EXPORT_LABELS.get(state, "")
+            if role == Qt.ForegroundRole and state in EXPORT_COLORS:
+                return QColor(EXPORT_COLORS[state])
+            if role == Qt.ToolTipRole:
+                return tip or None
+            return None
         if role != Qt.DisplayRole:
             return None
-        c, col = self.p.clips[index.row()], self.columns()[index.column()]
         if col == "#":
             return index.row() + 1
         if col == "In":
