@@ -22,6 +22,9 @@ def dark(app: QApplication):
 
 
 def main():
+    # File dialogs go through the desktop portal (the system's own dialog). Inside a Flatpak sandbox this is the only
+    # way to reach files outside the app's own folders; elsewhere it just gives the native look. The user can override.
+    os.environ.setdefault("QT_QPA_PLATFORMTHEME", "xdgdesktopportal")
     app = QApplication(sys.argv)
     locale.setlocale(locale.LC_NUMERIC, "C")  # mpv requires it
     dark(app)

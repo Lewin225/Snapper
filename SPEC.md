@@ -179,3 +179,8 @@ Not built: export (next), isolation job and the original/isolated toggle, speake
 - A project is one JSON file (`<video>-<hash>.snapper.json`) in the app data folder (`$XDG_DATA_HOME/snapper/projects`; under Flatpak that is the app's own data dir, so nothing is written beside the video). It holds the **video path** (absolute plus relative-to-project, so a moved folder still resolves; the user is asked to locate the video otherwise), the **transcript** (lines with word times), the **clip library**, tag types/kinds/values, the **selected clip**, the chosen audio track and whether the **scrub proxy is enabled**. Autosaves 0.8 s after any change and on close. File -> Open project / Save project as.
 - Proxies and decoded audio live in the cache folder (`$XDG_CACHE_HOME/snapper`). Proxies are pruned least-recently-used-first once they total more than **2 GB**; the proxy in use is never removed. Opening a proxy marks it as used.
 - Tests run with `SNAPPER_DATA` pointing at a temporary folder and never touch real projects.
+
+## Sandboxing (Flatpak)
+- All file dialogs are Qt's standard dialogs with the platform theme forced to `xdgdesktopportal`, so they are the system's own dialogs and are the only route to files outside the sandbox. No dialog uses `DontUseNativeDialog`.
+- Videos chosen through the portal arrive as document-portal paths (`/run/user/<uid>/doc/<id>/<name>`). The project stores that path plus a path relative to the project; if neither resolves, the user is asked to locate the video again.
+- Projects, caches (proxies, decoded audio) and logs stay in the app's own data/cache folders, which need no extra permissions. Exports will be written through a portal "choose folder" dialog.
