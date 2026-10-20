@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import queue
+import subprocess
 import re
 import struct
 from dataclasses import asdict, dataclass, field, replace
@@ -23,11 +24,15 @@ from . import media as media_cache
 from .model import BOOL, Clip, Project, tag_text
 from .pathnames import clean_part, has_invalid_chars
 
-FORMATS = ("wav",)                      # mp3 comes next
+FORMATS = ("wav", "mp3")
 SAMPLE_RATES = (44100, 48000, 22050)
 WAV_BIT_DEPTHS = (16, 24, 32)           # 32 is floating point
 # WAV text fields: the LIST/INFO chunk id for each choice offered in the settings
 WAV_TEXT_FIELDS = {"comment": "ICMT", "title": "INAM", "subject": "ISBJ"}
+# MP3 quality choices: constant bitrate (kbps) or LAME variable bitrate (v0 best ... v4)
+MP3_QUALITIES = ("320", "256", "192", "160", "128", "v0", "v2", "v4")
+# ID3 frame ffmpeg writes for each text-field choice (comment = COMM, title = TIT2, subject = TIT3 "subtitle")
+MP3_TEXT_FIELDS = {"comment": "comment", "title": "title", "subject": "subtitle"}
 TOKENS = ("id", "n", "start", "text")   # file-name template tokens; every tag name is a token too
 UNTAGGED_FOLDER = "_none"
 DEFAULT_TEMPLATE = "{character}_{text}"
@@ -45,6 +50,12 @@ class ExportSettings:
     folder_tags: list[str] = field(default_factory=list)   # first folder, then sub-folders
     text_field: Optional[str] = "comment"                   # which text field the clip text is written to; None = not written
     embed_tags: bool = True
+    mp3_quality: str = "192"             # MP3: kbps, or v0/v2/v4 for variable bitrate
+
+    @property
+    def source_bits(self) -> int:
+        """Bit depth of the audio the clips are cut from: MP3s are encoded from 16-bit audio."""
+        return 16 if self.format == "mp3" else self.bit_depth
 
     def to_json(self) -> dict:
         return asdict(self)
@@ -61,6 +72,8 @@ class ExportSettings:
             s.sample_rate = base.sample_rate
         if s.bit_depth not in WAV_BIT_DEPTHS:
             s.bit_depth = base.bit_depth
+        if s.mp3_quality not in MP3_QUALITIES:
+            s.mp3_quality = base.mp3_quality
         if s.text_field not in WAV_TEXT_FIELDS:
             s.text_field = None
         return s
@@ -134,10 +147,10 @@ def plan_files(project: Project, settings: ExportSettings, clips: Optional[list[
         stem = clean_part(render_name(settings.name_template, c, project, c.id, 3)) or f"clip_{c.id}"
         rel = Path(*folder_for(c, project, settings.folder_tags))
         name, k = stem, 2
-        while str(rel / (name + ".wav")).lower() in used:
+        while str(rel / (name + "." + settings.format)).lower() in used:
             name = f"{stem}_{k}"
             k += 1
-        used.add(str(rel / (name + ".wav")).lower())
+        used.add(str(rel / (name + "." + settings.format)).lower())
         if wanted is None or c.id in wanted:
             out.append((c, rel / f"{name}.{settings.format}"))
     return out
@@ -156,6 +169,23 @@ def export_signature(clip: Clip, settings: ExportSettings, track: int) -> str:
 def _chunk(cid: bytes, payload: bytes) -> bytes:
     pad = b"\0" if len(payload) % 2 else b""
     return cid + struct.pack("<I", len(payload)) + payload + pad
+
+
+def encode_mp3(frames: np.ndarray, rate: int, quality: str, target: Path,
+               info: Optional[dict[str, str]] = None, tags: Optional[dict] = None):
+    """Encodes 16-bit `frames` (n, channels) to an MP3 at `target` with ffmpeg's LAME encoder. `info` holds ID3 text
+    frames (ffmpeg metadata key -> text); `tags` goes in a custom 'snpr' text frame (TXXX) as JSON."""
+    n, ch = frames.shape
+    q = ["-q:a", quality[1:]] if quality.startswith("v") else ["-b:a", f"{quality}k"]
+    meta = []
+    for key, text in {**(info or {}), **({"snpr": json.dumps(tags, ensure_ascii=False)} if tags is not None else {})}.items():
+        meta += ["-metadata", f"{key}={text}"]
+    cmd = ["ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "s16le", "-ar", str(rate), "-ac", str(ch), "-i", "-",
+           "-c:a", "libmp3lame", *q, *meta, "-id3v2_version", "3", "-f", "mp3", str(target)]
+    r = subprocess.run(cmd, input=frames.astype("<i2").tobytes(), capture_output=True)
+    if r.returncode:
+        target.unlink(missing_ok=True)
+        raise ValueError(f"MP3 encoding failed: {r.stderr.decode(errors='replace').strip()[-200:]}")
 
 
 def wav_bytes(frames: np.ndarray, rate: int, bits: int, info: Optional[dict[str, str]] = None,
@@ -243,12 +273,16 @@ def write_one(clip: Clip, rel: Path, tag_kinds: dict[str, str], settings: Export
     frames = clip_frames(pcm, settings.sample_rate, clip)
     if len(frames) == 0:
         raise ValueError(f"{rel}: no audio in this time range")
-    info_id = WAV_TEXT_FIELDS.get(settings.text_field or "")
+    mp3 = settings.format == "mp3"
+    info_id = (MP3_TEXT_FIELDS if mp3 else WAV_TEXT_FIELDS).get(settings.text_field or "")
     info = {info_id: clip.text} if info_id and clip.text else None
     tags = {t: (True if tag_kinds.get(t) == BOOL else v) for t, v in clip.tags.items()} if settings.embed_tags else None
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_name(target.name + ".tmp")
-    tmp.write_bytes(wav_bytes(frames, settings.sample_rate, settings.bit_depth, info, tags))
+    if mp3:
+        encode_mp3(frames, settings.sample_rate, settings.mp3_quality, tmp, info, tags)
+    else:
+        tmp.write_bytes(wav_bytes(frames, settings.sample_rate, settings.bit_depth, info, tags))
     os.replace(tmp, target)
     return target
 
@@ -317,7 +351,7 @@ class _Worker(QThread):
             self.started_clip.emit(clip.id)
             try:
                 if pcm_path not in self._pcm:
-                    self._pcm[pcm_path] = media_cache.open_pcm(Path(pcm_path), settings.channels, settings.bit_depth)
+                    self._pcm[pcm_path] = media_cache.open_pcm(Path(pcm_path), settings.channels, settings.source_bits)
                 out_dir = Path(settings.output_dir)
                 target = write_one(clip, rel, kinds, settings, self._pcm[pcm_path], out_dir)
                 if old and Path(old).resolve() != target:

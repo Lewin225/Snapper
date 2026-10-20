@@ -184,6 +184,7 @@ class MainWindow(QMainWindow):
         self.clips.clip_selected.connect(self.edit)
         self.clips.clip_play.connect(lambda c: self.player.play_range(c.start, c.end))
         self.clips.clip_delete.connect(self.delete_clip)
+        self.clips.clip_duplicate.connect(self.duplicate_clip)
         self.clips.rename_requested.connect(self.rename_value)
         self.clips.export_requested.connect(self.export_clips)
         self.clips.export_settings_requested.connect(self.edit_export_settings)
@@ -622,6 +623,11 @@ class MainWindow(QMainWindow):
         else:
             self.edit(self.pending)
 
+    def duplicate_clip(self, clip: Clip):
+        """A copy with the same range, text and tags, right after the original; it opens for editing."""
+        copy = self.project.add(Clip(clip.start, clip.end, clip.text, clip.text_auto, dict(clip.tags)))
+        self.edit(copy)
+
     def delete_clip(self, clip: Clip):
         self.project.remove(clip)
         if self.editor.clip is clip:
@@ -724,7 +730,7 @@ class MainWindow(QMainWindow):
 
     def _with_export_audio(self, s, track: int, ok, fail):
         """Calls ok(path) once the decoded audio for these export settings exists (decoding it first if needed)."""
-        path = media.export_pcm_path(self.media_path, track, s.channels, s.sample_rate, s.bit_depth)
+        path = media.export_pcm_path(self.media_path, track, s.channels, s.sample_rate, s.source_bits)
         if path.exists():
             ok(path)
             return
@@ -733,7 +739,7 @@ class MainWindow(QMainWindow):
             waiters.append((ok, fail))
             return
         self._pcm_waiters[path] = [(ok, fail)]
-        job = media.pcm_job(self.info, self.info.duration, track, s.channels, s.sample_rate, s.bit_depth)
+        job = media.pcm_job(self.info, self.info.duration, track, s.channels, s.sample_rate, s.source_bits)
 
         def finished(good: bool, err: str = ""):
             for o, f in self._pcm_waiters.pop(path, []):

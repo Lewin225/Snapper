@@ -1,10 +1,13 @@
 """Right-hand panel: completed clips with per-tag filters."""
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QHBoxLayout, QHeaderView, QLabel, QPushButton,
+from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QHBoxLayout, QHeaderView, QLabel, QMenu, QPushButton,
                                QTableView, QVBoxLayout, QWidget)
 
+from . import desktop
 from .editor import SAVE_STYLE
 from .titles import section_title
 from .model import Clip, ClipFilter, ClipTableModel, Project
@@ -14,6 +17,7 @@ class ClipsPanel(QWidget):
     clip_selected = Signal(object)   # select to edit
     clip_play = Signal(object)
     clip_delete = Signal(object)
+    clip_duplicate = Signal(object)
     rename_requested = Signal(str)   # tag type
     export_requested = Signal()
     export_settings_requested = Signal()
@@ -33,6 +37,8 @@ class ClipsPanel(QWidget):
         self.table.setFocusPolicy(Qt.NoFocus)
         self.table.clicked.connect(lambda ix: self.clip_selected.emit(self._clip(ix)))
         self.table.doubleClicked.connect(lambda ix: self.clip_play.emit(self._clip(ix)))
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._context_menu)
         self.filter_row = QHBoxLayout()
         self.count = QLabel()
         self.play = QPushButton("Play")
@@ -76,6 +82,28 @@ class ClipsPanel(QWidget):
         self.proxy.layoutChanged.connect(self._update_count)
         self.rebuild_filters()
         self._update_count()
+
+    def _context_menu(self, pos):
+        ix = self.table.indexAt(pos)
+        if not ix.isValid():
+            return
+        self.build_context_menu(self._clip(ix)).exec(self.table.viewport().mapToGlobal(pos))
+
+    def build_context_menu(self, clip: Clip) -> QMenu:
+        exported = Path(clip.export_path) if clip.export_path else None
+        has_file = exported is not None and exported.exists()
+        menu = QMenu(self)
+        menu.addAction("Duplicate", lambda: self.clip_duplicate.emit(clip))
+        menu.addAction("Delete", lambda: self.clip_delete.emit(clip))
+        menu.addSeparator()
+        folder = menu.addAction("Open containing folder", lambda: desktop.show_in_folder(exported))
+        app = menu.addAction("Open in system app", lambda: desktop.open_file(exported))
+        for a in (folder, app):
+            a.setEnabled(has_file)
+            if not has_file:
+                a.setToolTip("This clip has not been exported yet." if exported is None else "The exported file is gone.")
+        menu.setToolTipsVisible(True)
+        return menu
 
     def set_export_enabled(self, enabled: bool, tip: str, can_auto: bool = False, auto_tip: str = ""):
         """Export is the primary action, available once the project has export settings (and clips). Auto export

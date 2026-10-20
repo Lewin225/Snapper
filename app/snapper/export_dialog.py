@@ -10,12 +10,16 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, 
                                QLabel, QLineEdit, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout,
                                QWidget)
 
-from .export import (DEFAULT_TEMPLATE, FORMATS, SAMPLE_RATES, TOKENS, WAV_BIT_DEPTHS, WAV_TEXT_FIELDS, ExportSettings,
+from .export import (DEFAULT_TEMPLATE, FORMATS, SAMPLE_RATES, TOKENS, MP3_QUALITIES, WAV_BIT_DEPTHS, WAV_TEXT_FIELDS, ExportSettings,
                      output_dir_problem, plan_files, template_problem)
 from .model import Project
 
-FORMAT_LABELS = {"wav": "WAV"}
-TEXT_FIELD_LABELS = {"comment": "Comment (ICMT)", "title": "Title (INAM)", "subject": "Subject (ISBJ)"}
+FORMAT_LABELS = {"wav": "WAV", "mp3": "MP3"}
+TEXT_FIELD_LABELS = {"wav": {"comment": "Comment (ICMT)", "title": "Title (INAM)", "subject": "Subject (ISBJ)"},
+                     "mp3": {"comment": "Comment (COMM)", "title": "Title (TIT2)", "subject": "Subtitle (TIT3)"}}
+MP3_LABELS = {"320": "320 kbps", "256": "256 kbps", "192": "192 kbps", "160": "160 kbps", "128": "128 kbps",
+              "v0": "Variable, best (V0, about 245 kbps)", "v2": "Variable, high (V2, about 190 kbps)",
+              "v4": "Variable, good (V4, about 165 kbps)"}
 BIT_LABELS = {16: "16-bit", 24: "24-bit", 32: "32-bit float"}
 
 
@@ -64,11 +68,15 @@ class ExportSettingsDialog(QDialog):
         for r in SAMPLE_RATES:
             self.rate.addItem(f"{r} Hz", r)
 
-        # format-specific options: each format shows its own rows (WAV: bit depth; MP3 will add bitrate / quality)
+        # format-specific options: each format shows its own rows (WAV: bit depth; MP3: bitrate / quality)
         self.bits = QComboBox()
         for b in WAV_BIT_DEPTHS:
             self.bits.addItem(BIT_LABELS[b], b)
         self.bits_label = QLabel("Bit depth")
+        self.quality = QComboBox()
+        for q in MP3_QUALITIES:
+            self.quality.addItem(MP3_LABELS[q], q)
+        self.quality_label = QLabel("Quality")
 
         # folders
         self.folder_list = QListWidget()
@@ -99,7 +107,7 @@ class ExportSettingsDialog(QDialog):
         self.text_field = QComboBox()
         self.text_field.addItem("Don't write the text", None)
         for k in WAV_TEXT_FIELDS:
-            self.text_field.addItem(TEXT_FIELD_LABELS[k], k)
+            self.text_field.addItem(TEXT_FIELD_LABELS["wav"][k], k)
         self.embed_tags = QCheckBox("Add the clip's tags to the file")
         self.embed_tags.setToolTip("Written as JSON in a custom 'snpr' chunk of the WAV file.")
 
@@ -114,6 +122,7 @@ class ExportSettingsDialog(QDialog):
         form.addRow("Channels", self.channels)
         form.addRow("Sample rate", self.rate)
         form.addRow(self.bits_label, self.bits)
+        form.addRow(self.quality_label, self.quality)
         form.addRow("Clip text goes in", self.text_field)
         form.addRow("", self.embed_tags)
 
@@ -175,7 +184,7 @@ class ExportSettingsDialog(QDialog):
             legend.addWidget(desc, i, 1)
         self.placeholders.addLayout(grid)
         self.placeholders.addLayout(legend)
-        ex = QLabel("Example: <b>{character}_{text}</b> gives <i>Alastor_But, yeah, that might be fun.wav</i>. Folders are set separately, below.")
+        ex = QLabel("Example: <b>{character}_{text}</b> gives <i>Alastor_But, yeah, that might be fun</i> plus the file type. Folders are set separately, below.")
         ex.setWordWrap(True)
         ex.setStyleSheet("color: gray;")
         self.placeholders.addWidget(ex)
@@ -188,9 +197,16 @@ class ExportSettingsDialog(QDialog):
             self._refresh()
 
     def _format_changed(self, *_):
-        wav = self.format.currentData() == "wav"
-        self.bits.setVisible(wav)
-        self.bits_label.setVisible(wav)
+        fmt = self.format.currentData()
+        for w in (self.bits, self.bits_label):
+            w.setVisible(fmt == "wav")
+        for w in (self.quality, self.quality_label):
+            w.setVisible(fmt == "mp3")
+        for i in range(1, self.text_field.count()):   # the same three choices, named for the format's own tags
+            self.text_field.setItemText(i, TEXT_FIELD_LABELS[fmt][self.text_field.itemData(i)])
+        self.embed_tags.setToolTip("Written as JSON in a custom 'snpr' " + (
+            "chunk of the WAV file." if fmt == "wav" else "text frame (TXXX) of the MP3's ID3 tag."))
+        self._refresh()   # the example file name shows the format's extension
 
     # --- values
     def _set(self, combo: QComboBox, data):
@@ -203,6 +219,7 @@ class ExportSettingsDialog(QDialog):
         self._set(self.channels, s.channels)
         self._set(self.rate, s.sample_rate)
         self._set(self.bits, s.bit_depth)
+        self._set(self.quality, s.mp3_quality)
         self._set(self.text_field, s.text_field)
         self.embed_tags.setChecked(s.embed_tags)
         folder_tags = [t for t in s.folder_tags if t in self.project.tag_kinds]
@@ -235,7 +252,7 @@ class ExportSettingsDialog(QDialog):
             output_dir=self.folder.text(), name_template=self.template.text().strip() or DEFAULT_TEMPLATE, format=self.format.currentData(),
             channels=self.channels.currentData(), sample_rate=self.rate.currentData(),
             bit_depth=self.bits.currentData(), folder_tags=tags, text_field=self.text_field.currentData(),
-            embed_tags=self.embed_tags.isChecked())
+            embed_tags=self.embed_tags.isChecked(), mp3_quality=self.quality.currentData())
 
     def _refresh(self, *_):
         s = self.settings()

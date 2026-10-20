@@ -26,6 +26,7 @@ episode, shot = Path(sys.argv[1]), sys.argv[2]
 app = QApplication(sys.argv)
 locale.setlocale(locale.LC_NUMERIC, "C")
 apply_system_theme(app)
+media.remove_export_audio(episode)   # decodes left by an aborted earlier run would hide the 'Preparing audio' step
 win = MainWindow(episode)
 win.show()
 wait_until_ready(win)
@@ -214,6 +215,59 @@ win.project.save(); assert '"auto_export": false' in Path(win.project.path).read
 win.clips.auto_export.click()   # leave it on: saved with the project
 QTest.qWait(300)
 print("ok   Auto export: exports outstanding clips when ticked, then new and edited clips by itself; failed clips retry only after an edit; off again does nothing")
+
+# --- MP3 in the settings dialog; auto export is still on, so changing the format re-exports everything
+dlg = ExportSettingsDialog(win.project, win)
+assert dlg.bits.isVisibleTo(dlg) and not dlg.quality.isVisibleTo(dlg)
+dlg.format.setCurrentIndex(dlg.format.findData("mp3"))
+assert dlg.quality.isVisibleTo(dlg) and not dlg.bits.isVisibleTo(dlg)
+assert "COMM" in dlg.text_field.itemText(1) and "TIT2" in dlg.text_field.itemText(2)
+dlg.quality.setCurrentIndex(dlg.quality.findData("v2"))
+assert dlg.settings().format == "mp3" and dlg.settings().mp3_quality == "v2"
+dlg.show(); dlg.grab().save(shot.replace(".png", "_dialog_mp3.png"))
+win.project.set_export_settings(dlg.settings().to_json())
+assert waitfor(lambda: all(label(c) == "✓ Exported" and Path(c.export_path).suffix == ".mp3" for c in win.project.clips)), \
+    [(label(c), c.export_path) for c in win.project.clips]
+assert not [c for c in win.project.clips if Path(c.export_path).with_suffix(".wav").exists()], "the old WAV files are replaced"
+assert all(Path(c.export_path).read_bytes()[:3] == b"ID3" for c in win.project.clips)
+print("ok   MP3 in the settings dialog (quality row replaces bit depth); changing format re-exports and replaces the WAVs")
+
+# --- right-click menu in the library
+from PySide6.QtWidgets import QMenu
+from snapper import desktop
+seen = {}
+opened = []
+desktop.open_file = lambda p: opened.append(("open", p))
+desktop.show_in_folder = lambda p: opened.append(("folder", p))
+import snapper.clips_panel as cp
+cp.desktop = desktop
+tgt = win.project.clips[0]
+def right_click(clip, want):
+    menu = win.clips.build_context_menu(clip)
+    seen["actions"] = {act.text(): act for act in menu.actions() if act.text()}
+    seen["actions"][want].trigger()
+n0 = len(win.project.clips)
+right_click(tgt, "Duplicate")
+assert list(seen["actions"]) == ["Duplicate", "Delete", "Open containing folder", "Open in system app"], list(seen["actions"])
+assert all(a.isEnabled() for a in seen["actions"].values())
+assert len(win.project.clips) == n0 + 1
+dup = win.project.clips[win.project.clips.index(tgt) + 1]
+assert (dup.start, dup.end, dup.text, dup.tags) == (tgt.start, tgt.end, tgt.text, tgt.tags) and dup.id != tgt.id and dup is not tgt
+assert dup.tags is not tgt.tags and win.editor.clip is dup, "the copy opens for editing"
+assert waitfor(lambda: label(dup) == "✓ Exported"), "auto export picks the copy up"
+assert Path(dup.export_path) != Path(tgt.export_path) and Path(dup.export_path).exists()
+right_click(tgt, "Open containing folder")
+right_click(tgt, "Open in system app")
+assert opened == [("folder", Path(tgt.export_path)), ("open", Path(tgt.export_path))], opened
+fresh = win.project.add(Clip(790.0, 791.0, "Never exported", True, {"character": "Husk"}))
+win.project.auto_export = False
+fresh.export_path = None
+right_click(fresh, "Delete")   # the menu's actions for an unexported clip: file actions are disabled
+assert not seen["actions"]["Open in system app"].isEnabled() and not seen["actions"]["Open containing folder"].isEnabled()
+assert fresh not in win.project.clips, "Delete from the menu removes the clip"
+win.project.auto_export = True
+win.project.remove(dup)
+print("ok   right-click: Duplicate (copy opens for editing, exports by itself), Delete, Open containing folder, Open in system app (disabled until exported)")
 
 # --- the states survive closing and reopening; a deleted file shows as not exported
 win.project.save()

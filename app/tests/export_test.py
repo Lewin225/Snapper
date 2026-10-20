@@ -129,4 +129,41 @@ assert dif.max() <= 20, "float decode must be the same loudness as the 16-bit on
 res = export_clips(p2, ExportSettings(name_template="c{n}", channels=2, bit_depth=24), st if False else decode(2, 44100, 24), mk())
 w = read_wav(res.files[0]); assert w["channels"] == 2 and w["bits"] == 24
 print("ok   24-bit and float decodes match the waveform; a stereo 24-bit export is written")
+
+# --- MP3
+import json as _json
+def probe(path):
+    r = subprocess.run(["ffprobe", "-v", "error", "-show_format", "-show_streams", "-of", "json", str(path)], capture_output=True, text=True)
+    return _json.loads(r.stdout)
+def decode_mp3(path, ch, rate):
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-f", "s16le", "-ac", str(ch), "-ar", str(rate), "-"], capture_output=True).stdout
+    return np.frombuffer(raw, "<i2").reshape(-1, ch)
+pm = Project(episode); pm.add_tag_type("overlap", "bool")
+cm = pm.add(Clip(700.0, 702.417, "But, yeah, “that” might be fun.", True, {"character": "Alastor", "overlap": True}))
+for q, kbps_lo, kbps_hi in (("128", 120e3, 136e3), ("v2", 40e3, 260e3)):
+    sm = ExportSettings(name_template="m_{n}", format="mp3", mp3_quality=q, folder_tags=["character"])
+    assert sm.source_bits == 16
+    res = export_clips(pm, sm, wave_pcm, mk())
+    assert len(res.files) == 1 and not res.skipped and res.files[0].suffix == ".mp3" and res.files[0].parent.name == "Alastor", res
+    f = res.files[0]; j = probe(f)
+    st = j["streams"][0]; tg = {k.lower(): v for k, v in j["format"]["tags"].items()}
+    assert st["codec_name"] == "mp3" and st["channels"] == 1 and st["sample_rate"] == "44100", st
+    assert abs(float(j["format"]["duration"]) - 2.417) < 0.06, j["format"]["duration"]
+    assert kbps_lo < float(j["format"]["bit_rate"]) < kbps_hi, (q, j["format"]["bit_rate"])
+    assert tg["comment"] == cm.text and _json.loads(tg["snpr"]) == {"character": "Alastor", "overlap": True}, tg
+    dec = decode_mp3(f, 1, 44100).astype(float).ravel()
+    ref = clip_frames(wave_pcm, 44100, cm).astype(float).ravel()
+    n = min(len(dec), len(ref)); lag = 0
+    best = max(range(-2400, 2400, 8), key=lambda L: np.dot(dec[max(L, 0):n + min(L, 0)][:20000], ref[max(-L, 0):][:20000]) if True else 0)
+    a = dec[max(best, 0):][:40000]; b = ref[max(-best, 0):][:40000]; m = min(len(a), len(b))
+    corr = np.corrcoef(a[:m], b[:m])[0, 1]
+    assert corr > 0.97, (q, corr, best)
+    assert 0.5 < dec.std() / ref.std() < 1.5
+    print(f"ok   MP3 {q}: {j['format']['bit_rate']} bit/s, {float(j['format']['duration']):.3f}s, tags + text read back, decoded audio matches the source (r={corr:.3f})")
+sm = ExportSettings(name_template="s", format="mp3", mp3_quality="v0", channels=2, sample_rate=48000, text_field=None, embed_tags=False)
+res = export_clips(pm, sm, decode(2, 48000, 16), mk())
+j = probe(res.files[0]); assert j["streams"][0]["channels"] == 2 and j["streams"][0]["sample_rate"] == "48000"
+assert "comment" not in {k.lower() for k in j["format"].get("tags", {})}
+assert plan_files(pm, sm)[0][1].suffix == ".mp3" and ExportSettings.from_json({"mp3_quality": "bogus"}).mp3_quality == "192"
+print("ok   MP3 stereo 48 kHz, no text / tags")
 print("EXPORT OK")
