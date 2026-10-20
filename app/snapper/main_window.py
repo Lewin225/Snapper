@@ -143,7 +143,7 @@ class MainWindow(QMainWindow):
         root.setCollapsible(0, False)  # everything on the left
         root.setCollapsible(1, True)   # clip list
         video_box.setMinimumSize(max(360, controls.sizeHint().width()), 320)
-        self.editor.setMinimumHeight(356)   # includes the pane title
+        self.editor.setMinimumHeight(340)   # includes the pane title
         left.setMinimumWidth(640)
         self.transcript_area.setMinimumWidth(120)
         self.clips.setMinimumWidth(240)

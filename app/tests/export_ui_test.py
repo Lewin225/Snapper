@@ -170,7 +170,7 @@ print("ok   the tag box refuses characters a path can't hold")
 from PySide6.QtWidgets import QLabel
 ys = {b.mapTo(win, b.rect().center()).y() for b in (win.clips.play, win.clips.delete, win.clips.export_settings_btn, win.clips.export_btn)}
 assert max(ys) - min(ys) < 4, ys
-titles = {l.text() for l in win.findChildren(QLabel) if l.text() in ("Transcript", "Playback", "Library", "Clip Editor")}
+titles = {l.text().split(" — ")[0] for l in win.findChildren(QLabel) if l.text().split(" — ")[0] in ("Transcript", "Playback", "Library", "Clip Editor")}
 assert titles == {"Transcript", "Playback", "Library", "Clip Editor"}, titles
 print("ok   Play/Delete/Export Settings/Export are on one row; Transcript, Playback, Library and Clip Editor have titles")
 

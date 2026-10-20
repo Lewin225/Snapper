@@ -42,8 +42,7 @@ class ClipEditor(QWidget):
         self.bool_boxes: dict[str, QCheckBox] = {}
 
         self.wave = WaveformWidget()
-        self.status = QLabel()
-        self.status.setStyleSheet("font-weight: bold;")
+        self.status = section_title("Clip Editor")   # the pane title, followed by what is being edited
         self.scrub_in = TimeScrubber("Start")
         self.scrub_out = TimeScrubber("End")
         self.scrub_len = TimeScrubber("Length")
@@ -78,9 +77,8 @@ class ClipEditor(QWidget):
 
         marks = QHBoxLayout()
         marks.setSpacing(12)
-        left = QVBoxLayout()           # clip status above the clip buttons, to the left of the Start/End values
+        left = QVBoxLayout()           # clip buttons, to the left of the Start/End values
         left.setSpacing(6)
-        left.addWidget(self.status)
         clip_buttons = QHBoxLayout()
         clip_buttons.setSpacing(8)
         clip_buttons.addWidget(self.play_btn)
@@ -105,7 +103,7 @@ class ClipEditor(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(14, 10, 14, 12)
         lay.setSpacing(10)
-        lay.addWidget(section_title("Clip Editor"))
+        lay.addWidget(self.status)
         lay.addWidget(self.wave, 1)
         lay.addLayout(marks)
         lay.addLayout(self.tag_row)
@@ -201,13 +199,16 @@ class ClipEditor(QWidget):
         self.scrub_len.set_value(c.duration if both else None)
         self.scrub_len.set_limits(MIN_LENGTH, total)
         if c.id is not None:
-            self.status.setText("Editing a saved clip")
+            self._set_status("Editing a saved clip")
             self.save_btn.setText("Done (Enter)")
         else:
-            self.status.setText("New clip" if c.start is not None else "No selection")
+            self._set_status("New clip" if c.start is not None else "No selection")
             self.save_btn.setText("Save to Library (Enter)")
         self.save_btn.setEnabled(c.start is not None and c.end is not None)
         self.deselect_btn.setEnabled(c.start is not None or c.id is not None)
+
+    def _set_status(self, what: str):
+        self.status.setText(f"Clip Editor — {what}")
 
     def set_range(self, a: Optional[float], b: Optional[float], text: Optional[str] = None):
         self.clip.start, self.clip.end = a, b

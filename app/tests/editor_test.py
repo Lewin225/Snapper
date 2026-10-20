@@ -132,7 +132,7 @@ assert ed.clip.start is None and len(win.project.clips) == 1
 print("ok   Deselect clip: markers cleared, library unchanged")
 win.clips.clip_selected.emit(win.project.clips[0])
 QTest.qWait(200)
-assert "Done" in ed.save_btn.text() and ed.status.text().startswith("Editing")
+assert "Done" in ed.save_btn.text() and "— Editing" in ed.status.text() and ed.status.text().startswith("Clip Editor")
 drag(ed.scrub_in, -20)       # edit the stored clip by dragging
 assert abs(win.project.clips[0].start - 699.8) < 0.003, win.project.clips[0].start
 print("ok   editing a saved clip: label switches to Done; dragging edits the stored clip")
