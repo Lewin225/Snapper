@@ -7,7 +7,7 @@ os.environ.setdefault("SNAPPER_DATA", tempfile.mkdtemp())
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
-from snapper.__main__ import dark
+from snapper.theme import apply_system_theme
 from snapper.main_window import MainWindow
 from snapper.model import Project
 from snapper.transcript import Transcript, parse_srt
@@ -16,7 +16,7 @@ from support import wait_until_ready
 episode, srt = Path(sys.argv[1]), Path(sys.argv[2])
 app = QApplication(sys.argv)
 locale.setlocale(locale.LC_NUMERIC, "C")
-dark(app)
+apply_system_theme(app)
 
 win = MainWindow(episode)
 win.show()

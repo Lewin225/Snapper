@@ -16,14 +16,14 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from snapper import media
-from snapper.__main__ import dark
+from snapper.theme import apply_system_theme
 from snapper.main_window import MainWindow
 from snapper.transcript import Transcript, parse_srt
 
 episode, srt, shot = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
 app = QApplication(sys.argv)
 locale.setlocale(locale.LC_NUMERIC, "C")
-dark(app)
+apply_system_theme(app)
 import os
 if not os.environ.get("SMOKE_KEEP_CACHE"):
     shutil.rmtree(media.cache_dir(episode), ignore_errors=True)  # force the audio + proxy jobs to run

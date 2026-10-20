@@ -184,3 +184,6 @@ Not built: export (next), isolation job and the original/isolated toggle, speake
 - All file dialogs are Qt's standard dialogs with the platform theme forced to `xdgdesktopportal`, so they are the system's own dialogs and are the only route to files outside the sandbox. No dialog uses `DontUseNativeDialog`.
 - Videos chosen through the portal arrive as document-portal paths (`/run/user/<uid>/doc/<id>/<name>`). The project stores that path plus a path relative to the project; if neither resolves, the user is asked to locate the video again.
 - Projects, caches (proxies, decoded audio) and logs stay in the app's own data/cache folders, which need no extra permissions. Exports will be written through a portal "choose folder" dialog.
+
+## Theme
+The app follows the system theme. With a real platform theme (the KDE Flatpak runtime) Qt styles everything and the app forces nothing. Otherwise the palette is built from the user's KDE colour scheme (`kdeglobals`, which a Flatpak needs `--filesystem=xdg-config/kdeglobals:ro` to read), falling back to Qt's light/dark palette, and it updates live when either changes. Colours in custom widgets come from the palette; the waveform and video areas stay dark on purpose. `SNAPPER_KDEGLOBALS` overrides the file's path (dev container).

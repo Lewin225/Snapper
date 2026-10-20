@@ -3,22 +3,10 @@ import os
 import sys
 from pathlib import Path
 
-from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 from .main_window import MainWindow
-
-
-def dark(app: QApplication):
-    app.setStyle("Fusion")
-    p = QPalette()
-    for role, col in ((QPalette.Window, "#25272b"), (QPalette.WindowText, "#e6e6e6"), (QPalette.Base, "#1b1d20"),
-                      (QPalette.AlternateBase, "#25272b"), (QPalette.Text, "#e6e6e6"), (QPalette.Button, "#2f3237"),
-                      (QPalette.ButtonText, "#e6e6e6"), (QPalette.Highlight, "#3a78c2"),
-                      (QPalette.HighlightedText, "#ffffff"), (QPalette.ToolTipBase, "#2f3237"),
-                      (QPalette.ToolTipText, "#e6e6e6"), (QPalette.PlaceholderText, "#8a8f98")):
-        p.setColor(role, QColor(col))
-    app.setPalette(p)
+from .theme import apply_system_theme
 
 
 def main():
@@ -27,7 +15,7 @@ def main():
     os.environ.setdefault("QT_QPA_PLATFORMTHEME", "xdgdesktopportal")
     app = QApplication(sys.argv)
     locale.setlocale(locale.LC_NUMERIC, "C")  # mpv requires it
-    dark(app)
+    apply_system_theme(app)
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     path = args[0] if args else QFileDialog.getOpenFileName(None, "Open episode")[0]
     if not path:

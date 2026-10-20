@@ -9,14 +9,14 @@ os.environ.setdefault("SNAPPER_DATA", str(root / "data"))
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
-from snapper.__main__ import dark
+from snapper.theme import apply_system_theme
 from snapper.main_window import MainWindow
 from snapper.transcript import Transcript
 
 episode, shot = Path(sys.argv[1]), sys.argv[2]
 app = QApplication(sys.argv)
 locale.setlocale(locale.LC_NUMERIC, "C")
-dark(app)
+apply_system_theme(app)
 win = MainWindow(episode)
 win.resize(1500, 844)
 win.show()

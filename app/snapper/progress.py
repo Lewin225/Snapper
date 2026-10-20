@@ -60,19 +60,19 @@ class ProxyBanner(QLabel):
     def __init__(self):
         super().__init__()
         self.setContentsMargins(10, 4, 10, 4)
-        self.setStyleSheet("background: #5a4a1e; color: #f0dca0; border-radius: 3px;")
+        self.setStyleSheet("background: #ffe9a8; color: #4d3b00; border-radius: 3px;")
         self._hide = QTimer(self, singleShot=True, interval=4000, timeout=self.hide)
         self.hide()
 
     def generating(self, fraction: Optional[float]):
         self._hide.stop()
-        self.setStyleSheet("background: #5a4a1e; color: #f0dca0; border-radius: 3px;")
+        self.setStyleSheet("background: #ffe9a8; color: #4d3b00; border-radius: 3px;")
         pct = "" if fraction is None else f" {fraction * 100:.0f}%"
         self.setText(f"Generating scrub proxy…{pct}  Scrubbing is slow until it finishes (playing the original video).")
         self.show()
 
     def ready(self):
-        self.setStyleSheet("background: #1e4a2a; color: #a8e6b8; border-radius: 3px;")
+        self.setStyleSheet("background: #c9efd2; color: #1b4d2a; border-radius: 3px;")
         self.setText("Scrub proxy ready: scrubbing is now fast.")
         self.show()
         self._hide.start()

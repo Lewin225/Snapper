@@ -14,13 +14,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QPushButton
 
-from snapper.__main__ import dark
+from snapper.theme import apply_system_theme
 from snapper.main_window import MainWindow
 from support import wait_until_ready
 
 app = QApplication(sys.argv)
 locale.setlocale(locale.LC_NUMERIC, "C")
-dark(app)
+apply_system_theme(app)
 win = MainWindow(Path(sys.argv[1]))
 win.show()
 wait_until_ready(win)

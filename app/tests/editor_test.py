@@ -15,13 +15,13 @@ from PySide6.QtGui import QMouseEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
-from snapper.__main__ import dark
+from snapper.theme import apply_system_theme
 from snapper.main_window import MainWindow
 from snapper.scrubber import parse_time
 
 app = QApplication(sys.argv)
 locale.setlocale(locale.LC_NUMERIC, "C")
-dark(app)
+apply_system_theme(app)
 episode = Path(sys.argv[1])
 episode.with_name(episode.name + ".snapper.json").unlink(missing_ok=True)
 win = MainWindow(episode)

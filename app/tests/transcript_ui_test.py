@@ -17,13 +17,13 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from snapper import media
-from snapper.__main__ import dark
+from snapper.theme import apply_system_theme
 from snapper.main_window import MainWindow
 from snapper.transcript import Transcript
 
 app = QApplication(sys.argv)
 locale.setlocale(locale.LC_NUMERIC, "C")
-dark(app)
+apply_system_theme(app)
 app.setQuitOnLastWindowClosed(False)  # the test opens several windows one after another
 
 

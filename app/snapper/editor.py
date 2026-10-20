@@ -14,9 +14,10 @@ from .waveform import WaveformWidget
 INT_UNSET = -10000  # the spin box minimum: shown as an empty value, meaning the tag is not set on the clip
 
 SAVE_STYLE = """
-QPushButton { background: #3a78c2; color: white; font-weight: bold; padding: 6px 18px; border-radius: 4px; }
-QPushButton:hover { background: #4a88d2; }
-QPushButton:disabled { background: #34383e; color: #7a7e86; }
+QPushButton { background: palette(highlight); color: palette(highlighted-text); font-weight: bold;
+              padding: 6px 18px; border-radius: 4px; border: 1px solid palette(highlight); }
+QPushButton:hover { border: 1px solid palette(text); }
+QPushButton:disabled { background: palette(button); color: palette(mid); border: 1px solid palette(mid); }
 """
 
 
