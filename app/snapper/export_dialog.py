@@ -6,8 +6,9 @@ from typing import Optional
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
-                               QLabel, QLineEdit, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout)
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QGridLayout, QGroupBox, QHBoxLayout,
+                               QLabel, QLineEdit, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout,
+                               QWidget)
 
 from .export import (DEFAULT_TEMPLATE, FORMATS, SAMPLE_RATES, TOKENS, WAV_BIT_DEPTHS, WAV_TEXT_FIELDS, ExportSettings,
                      output_dir_problem, plan_files, template_problem)
@@ -23,7 +24,7 @@ class ExportSettingsDialog(QDialog):
         super().__init__(parent)
         self.project = project
         self.setWindowTitle("Export settings")
-        self.setMinimumWidth(520)
+        self.setMinimumWidth(560)
         cur = ExportSettings.from_json(project.export_settings) if project.export_settings else ExportSettings()
         # tags that no longer exist cannot be folders
         cur.folder_tags = [t for t in cur.folder_tags if t in project.tag_kinds]
@@ -41,6 +42,10 @@ class ExportSettingsDialog(QDialog):
         self.folder_msg.setStyleSheet("color: #c0392b;")
         self.template = QLineEdit(cur.name_template)
         self.template.setToolTip("Fields: " + ", ".join("{%s}" % t for t in (*TOKENS, *project.tag_types)))
+        self.placeholder_box = QWidget()   # explanation, and buttons that insert each placeholder
+        self.placeholders = QVBoxLayout(self.placeholder_box)
+        self.placeholders.setContentsMargins(0, 0, 0, 0)
+        self.placeholders.setSpacing(4)
         self.template_msg = QLabel()
         self.template_msg.setWordWrap(True)
         self.template_msg.setStyleSheet("color: #c0392b;")
@@ -102,6 +107,7 @@ class ExportSettingsDialog(QDialog):
         form.addRow("Export folder", self.folder_row)
         form.addRow("", self.folder_msg)
         form.addRow("File name", self.template)
+        form.addRow("", self.placeholder_box)
         form.addRow("", self.template_msg)
         form.addRow("", self.example)
         form.addRow("Format", self.format)
@@ -126,7 +132,53 @@ class ExportSettingsDialog(QDialog):
         self.folder_list.itemChanged.connect(self._refresh)
         self.folder_list.model().rowsMoved.connect(self._refresh)
         self.format.currentIndexChanged.connect(self._format_changed)
+        self._build_placeholders()
         self._load(cur)
+
+    def _build_placeholders(self):
+        """The file name is a template: explain it, and offer every placeholder as a button that inserts it."""
+        while self.placeholders.count():
+            item = self.placeholders.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+            elif item.layout():
+                while item.layout().count():
+                    w = item.layout().takeAt(0).widget()
+                    if w:
+                        w.deleteLater()
+        intro = QLabel("The name is made from <b>placeholders</b> in curly braces, replaced for each clip. "
+                       "Click one to insert it at the cursor.")
+        intro.setWordWrap(True)
+        intro.setStyleSheet("color: gray;")
+        self.placeholders.addWidget(intro)
+        info = [("n", "the clip's number, zero-padded (001, 002, …)"), ("id", "the clip's number, not padded"),
+                ("start", "where the clip starts in the episode, in milliseconds"),
+                ("text", "the start of the clip's text")]
+        info += [(t, f"the clip's “{t}” tag" + (" (Yes / No)" if self.project.tag_kinds[t] == "bool" else ""))
+                 for t in self.project.tag_types]
+        grid = QGridLayout()
+        grid.setSpacing(4)
+        legend = QGridLayout()   # one row per placeholder; short lines, so nothing needs wrapping
+        legend.setHorizontalSpacing(10)
+        legend.setVerticalSpacing(1)
+        legend.setColumnStretch(1, 1)
+        for i, (name, what) in enumerate(info):
+            b = QPushButton("{%s}" % name)
+            b.setToolTip(what[0].upper() + what[1:])
+            b.setFocusPolicy(Qt.NoFocus)
+            b.clicked.connect(lambda _c=False, n=name: self.template.insert("{%s}" % n))
+            grid.addWidget(b, i // 4, i % 4)
+            key = QLabel("<b>{%s}</b>" % name)
+            desc = QLabel(what)
+            desc.setStyleSheet("color: gray;")
+            legend.addWidget(key, i, 0)
+            legend.addWidget(desc, i, 1)
+        self.placeholders.addLayout(grid)
+        self.placeholders.addLayout(legend)
+        ex = QLabel("Example: <b>{character}_{n}</b> gives <i>Alastor_007.wav</i>. Folders are set separately, below.")
+        ex.setWordWrap(True)
+        ex.setStyleSheet("color: gray;")
+        self.placeholders.addWidget(ex)
 
     def _browse(self):
         start = self.folder.text() if Path(self.folder.text()).is_dir() else str(Path.home())
