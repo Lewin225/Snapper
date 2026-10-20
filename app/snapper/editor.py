@@ -11,6 +11,7 @@ from .model import BOOL, INT, STRING, Clip, Project
 from .scrubber import TimeScrubber
 from .waveform import WaveformWidget
 
+MIN_LENGTH = 0.010  # shortest clip the Length field can make
 INT_UNSET = -10000  # the spin box minimum: shown as an empty value, meaning the tag is not set on the clip
 
 SAVE_STYLE = """
@@ -42,8 +43,9 @@ class ClipEditor(QWidget):
         self.status.setStyleSheet("font-weight: bold;")
         self.scrub_in = TimeScrubber("Start")
         self.scrub_out = TimeScrubber("End")
-        self.duration = QLabel()
-        self.duration.setMinimumWidth(80)
+        self.scrub_len = TimeScrubber("Length")
+        self.scrub_len.setToolTip("Length: drag left/right to grow or shrink the clip from both ends at once "
+                                  "(Shift = coarse, Ctrl = 1 ms steps). Double-click to type a length.")
         self.snap = QCheckBox("Snap to words")
         self.snap.setChecked(True)
         self.snap.setFocusPolicy(Qt.NoFocus)
@@ -69,6 +71,7 @@ class ClipEditor(QWidget):
 
         self.scrub_in.changed.connect(lambda v: self._marker_changed("in", v))
         self.scrub_out.changed.connect(lambda v: self._marker_changed("out", v))
+        self.scrub_len.changed.connect(self._length_changed)
 
         marks = QHBoxLayout()
         marks.setSpacing(12)
@@ -84,13 +87,7 @@ class ClipEditor(QWidget):
         marks.addStretch(1)
         marks.addWidget(self.scrub_in)
         marks.addWidget(self.scrub_out)
-        dur_box = QVBoxLayout()
-        dur_box.setSpacing(0)
-        cap = QLabel("Length")
-        cap.setStyleSheet("color: gray;")
-        dur_box.addWidget(cap)
-        dur_box.addWidget(self.duration, 1, Qt.AlignVCenter)
-        marks.addLayout(dur_box)
+        marks.addWidget(self.scrub_len)
         marks.addSpacing(8)
         marks.addWidget(self.snap, 0, Qt.AlignBottom)
         self.tag_row = QHBoxLayout()
@@ -193,7 +190,9 @@ class ClipEditor(QWidget):
         self.scrub_out.set_value(c.end)
         self.scrub_in.set_limits(0.0, c.end if c.end is not None else total)
         self.scrub_out.set_limits(c.start if c.start is not None else 0.0, total)
-        self.duration.setText(f"{c.duration:.3f} s" if c.start is not None and c.end is not None else "--")
+        both = c.start is not None and c.end is not None
+        self.scrub_len.set_value(c.duration if both else None)
+        self.scrub_len.set_limits(MIN_LENGTH, total)
         if c.id is not None:
             self.status.setText("Editing a saved clip")
             self.save_btn.setText("Done (Enter)")
@@ -225,6 +224,20 @@ class ClipEditor(QWidget):
         c = self.clip
         self.range_edited.emit(v, c.end) if which == "in" else self.range_edited.emit(c.start, v)
         self.preview_requested.emit(v)
+
+    def _length_changed(self, length: float):
+        """The clip grows or shrinks around its centre; at the start or end of the episode it slides to stay inside."""
+        c = self.clip
+        if c.start is None or c.end is None:
+            return
+        total = self.wave.dur or 1e9
+        mid = (c.start + c.end) / 2
+        a, b = mid - length / 2, mid + length / 2
+        if a < 0:
+            a, b = 0.0, min(b - a, total)
+        elif b > total:
+            a, b = max(a - (b - total), 0.0), total
+        self.range_edited.emit(a, b)
 
     def _text_changed(self):
         if self._loading:

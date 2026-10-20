@@ -52,7 +52,7 @@ print("ok   no selection: values, Save and Clear disabled")
 win.set_range(700.0, 702.4)
 QTest.qWait(300)
 assert ed.scrub_in.value() == 700.0 and ed.scrub_out.value() == 702.4 and ed.save_btn.isEnabled()
-print("ok   selection shown in the Start/End fields; length", ed.duration.text())
+print("ok   selection shown in the Start/End fields; length", ed.scrub_len.value())
 
 drag(ed.scrub_in, 50)            # 50 px * 10 ms
 print(f"     drag Start +50 px -> {ed.clip.start:.3f}")
@@ -97,6 +97,27 @@ assert abs(ed.clip.end - 703.0) < 0.002, "Esc should cancel the typed value"
 print("ok   typed times (m:ss.mmm and seconds); Esc cancels")
 
 # buttons
+win.set_range(700.0, 702.4)
+QTest.qWait(100)
+mid = (ed.clip.start + ed.clip.end) / 2
+drag(ed.scrub_len, 50)                       # 50 px * 10 ms = +0.5 s, split over both ends
+assert abs(ed.scrub_len.value() - 2.9) < 0.005 and abs((ed.clip.start + ed.clip.end) / 2 - mid) < 0.002, \
+    (ed.scrub_len.value(), ed.clip.start, ed.clip.end)
+assert abs(ed.clip.start - 699.75) < 0.003 and abs(ed.clip.end - 702.65) < 0.003
+drag(ed.scrub_len, -9000)                    # cannot shrink past the minimum
+assert abs(ed.scrub_len.value() - 0.010) < 0.002 and ed.clip.start < ed.clip.end
+ed.scrub_len.mouseDoubleClickEvent(None)
+ed.scrub_len._edit.setText("1.5")
+ed.scrub_len._edit.editingFinished.emit()
+QTest.qWait(100)
+assert abs(ed.scrub_len.value() - 1.5) < 0.002 and abs((ed.clip.start + ed.clip.end) / 2 - mid) < 0.003
+win.set_range(0.5, 1.5)                      # near the start of the episode: slides instead of passing 0
+ed.scrub_len.mouseDoubleClickEvent(None)
+ed.scrub_len._edit.setText("4")
+ed.scrub_len._edit.editingFinished.emit()
+QTest.qWait(100)
+assert ed.clip.start == 0.0 and abs(ed.clip.end - 4.0) < 0.002, (ed.clip.start, ed.clip.end)
+print("ok   Length field: drag/type grows and shrinks the clip around its centre; stays inside the episode")
 win.set_range(700.0, 702.4)
 ed.set_tag("character", "voice1")
 ed.save_btn.click()
