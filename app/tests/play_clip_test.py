@@ -1,0 +1,43 @@
+"""Play Clip plays in -> out and stops at the out marker; Play from In keeps going.
+
+usage: python tests/play_clip_test.py EPISODE.mkv   (needs the display/GL environment from run.sh)
+"""
+import locale
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import os, tempfile
+os.environ.setdefault("SNAPPER_DATA", tempfile.mkdtemp())   # tests never touch the real projects
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QPushButton
+
+from snapper.__main__ import dark
+from snapper.main_window import MainWindow
+from support import wait_until_ready
+
+app = QApplication(sys.argv)
+locale.setlocale(locale.LC_NUMERIC, "C")
+dark(app)
+win = MainWindow(Path(sys.argv[1]))
+win.show()
+wait_until_ready(win)
+btn = {b.text(): b for b in win.findChildren(QPushButton)}
+
+win.set_range(700.0, 702.4)
+btn["▶ Play Clip (P)"].click()
+QTest.qWait(1000)
+assert not win.player.paused, "should be playing mid-clip"
+QTest.qWait(3500)
+print(f"Play Clip: paused={win.player.paused} pos={win.player.pos:.3f} (out marker 702.400)")
+assert win.player.paused and abs(win.player.pos - 702.4) < 0.1, "should stop at the out marker"
+
+btn["▶| Play from In"].click()
+QTest.qWait(4500)
+print(f"Play from In: paused={win.player.paused} pos={win.player.pos:.3f}")
+assert not win.player.paused and win.player.pos > 703.5, "Play from In must not stop at the out marker"
+win.player.stop()
+print("PLAY CLIP OK")
+win.close()
