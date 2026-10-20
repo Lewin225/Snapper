@@ -44,7 +44,7 @@ print("ok   the 'ready' banner hides itself")
 # transcript strip: with lines already shown, the progress sits above the list
 win.set_transcript(Transcript([{"start": 1.0, "end": 2.0, "text": "hello there", "words": []}]))
 win.transcript_area.set_busy("Transcribing…", 0.25)
-assert not win.transcript_area.bar_list.isHidden() and "25%" in win.transcript_area.busy_label.text()
+assert not win.transcript_area.bar_list.isHidden() and win.transcript_area.bar_list.text() == "Transcribing… 25%"
 win.grab().save(shot.replace(".png", "_transcribing.png"))
 win.transcript_area.set_busy(None)
 assert win.transcript_area.bar_list.isHidden()

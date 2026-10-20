@@ -230,14 +230,8 @@ class TranscriptArea(QWidget):
         ll = QVBoxLayout(listing)
         ll.setContentsMargins(0, 0, 0, 0)
         ll.setSpacing(4)
-        self.busy_label = QLabel()           # progress strip above the list while lines are still arriving
-        self.busy_label.setStyleSheet("color: #9fc4f0;")
-        self.busy_label.setWordWrap(True)
-        self.bar_list = QProgressBar()
-        self.bar_list.setFixedHeight(12)
-        self.busy_label.hide()
+        self.bar_list = QProgressBar()       # progress above the list while lines are still arriving
         self.bar_list.hide()
-        ll.addWidget(self.busy_label)
         ll.addWidget(self.bar_list)
         ll.addWidget(self.search)
         ll.addWidget(panel, 1)
@@ -260,21 +254,20 @@ class TranscriptArea(QWidget):
         menu.exec(self.btn_video.mapToGlobal(self.btn_video.rect().bottomLeft()))
 
     def set_busy(self, text: Optional[str], fraction: Optional[float] = None):
-        """Shows progress while a transcript is being generated: a bar in place of the buttons, or above the list
-        once the first lines have arrived. `text` None ends it."""
+        """Shows progress while a transcript is being generated: one bar reading "<text> N%", in place of the
+        buttons or above the list once lines have arrived. `text` None ends it."""
         busy = text is not None
-        pct = "" if fraction is None else f" {fraction * 100:.0f}%"
-        self.message.setText(f"{text}{pct}" if busy else "No transcript yet")
-        self.busy_label.setText(f"{text}{pct}  New lines appear as they are found." if busy else "")
+        self.message.setVisible(not busy)
         for bar in (self.bar_empty, self.bar_list):
             bar.setVisible(busy)
             if busy:
                 if fraction is None:
                     bar.setRange(0, 0)
+                    bar.setFormat(text)
                 else:
                     bar.setRange(0, 100)
                     bar.setValue(int(fraction * 100))
-        self.busy_label.setVisible(busy)
+                    bar.setFormat(f"{text} %p%")
         for b in (self.btn_generate, self.btn_video, self.btn_file):
             b.setEnabled(not busy and (b is not self.btn_video or bool(self.tracks)))
 

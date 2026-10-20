@@ -61,10 +61,10 @@ print("ok   choosing a track loads it and swaps the buttons for the list:", len(
 win.set_transcript(Transcript([]))
 assert area._stack.currentIndex() == 0
 area.set_busy("Transcribing…", 0.4)
-assert not area.btn_generate.isEnabled() and "40%" in area.message.text()
-assert not area.bar_empty.isHidden() and area.bar_empty.value() == 40
+assert not area.btn_generate.isEnabled() and area.message.isHidden()
+assert not area.bar_empty.isHidden() and area.bar_empty.value() == 40 and area.bar_empty.text() == "Transcribing… 40%"
 area.set_busy(None)
-assert area.bar_empty.isHidden() and area.busy_label.isHidden()
+assert area.bar_empty.isHidden() and not area.message.isHidden()
 assert area.btn_generate.isEnabled()
 print("ok   busy state disables the buttons and shows progress")
 assert not win.audio_combo.isEnabled() and win.audio_combo.count() == 1
