@@ -4,8 +4,8 @@ from __future__ import annotations
 from typing import Optional
 
 import numpy as np
-from PySide6.QtCore import QLineF, QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPen, QPixmap
+from PySide6.QtCore import QEvent, QLineF, QPointF, QRectF, Qt, Signal
+from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPalette, QPen, QPixmap
 from PySide6.QtWidgets import QWidget
 
 from .media import RATE
@@ -64,9 +64,20 @@ class WaveformWidget(QWidget):
         return a + x / max(self.width(), 1) * (b - a)
 
     # --- painting
+    def _dim(self) -> QColor:
+        c = QColor(self.palette().color(QPalette.Text))
+        c.setAlpha(150)
+        return c
+
+    def changeEvent(self, e):
+        if e.type() == QEvent.PaletteChange:   # the cached peak image holds the old colours
+            self._key = None
+            self.update()
+        super().changeEvent(e)
+
     def _render_peaks(self, a, b, w, h):
         pm = QPixmap(w, h)
-        pm.fill(QColor(24, 26, 30))
+        pm.fill(self.palette().color(QPalette.Base))
         seg = np.asarray(self.samples[int(a * RATE):int(b * RATE)], dtype=np.float32) / 32768.0
         if len(seg) and w:
             n = min(w, len(seg))
@@ -79,7 +90,7 @@ class WaveformWidget(QWidget):
             y0 = mid - np.clip(mx * self.gain, -1, 1) * half
             y1 = mid - np.clip(mn * self.gain, -1, 1) * half
             p = QPainter(pm)
-            p.setPen(QPen(QColor(90, 170, 255), 1))
+            p.setPen(QPen(self.palette().color(QPalette.Highlight), 1))
             p.drawLines([QLineF(x, ya, x, yb) for x, ya, yb in zip(xs, y0, y1)])
             p.end()
         return pm
@@ -88,8 +99,8 @@ class WaveformWidget(QWidget):
         p = QPainter(self)
         w, h = self.width(), self.height()
         if self.samples is None:
-            p.fillRect(self.rect(), QColor(24, 26, 30))
-            p.setPen(QColor(160, 160, 160))
+            p.fillRect(self.rect(), self.palette().color(QPalette.Base))
+            p.setPen(self._dim())
             p.drawText(self.rect(), Qt.AlignCenter, "Decoding audio…")
             return
         a, b = self.view()
@@ -99,26 +110,30 @@ class WaveformWidget(QWidget):
         p.drawPixmap(0, 0, self._pm)
 
         fm = QFontMetrics(p.font())
-        p.setPen(QColor(200, 200, 140))
+        text, mid = self.palette().color(QPalette.Text), self.palette().color(QPalette.Mid)
         for wd in self.word_source(a, b):
             x0, x1 = self._x(wd["start"], a, b), self._x(wd["end"], a, b)
+            p.setPen(mid)
             p.drawLine(QPointF(x0, 0), QPointF(x0, WORD_BAND))
+            p.setPen(text)
             p.drawText(QRectF(x0 + 2, 0, max(x1 - x0 - 2, 0), WORD_BAND), Qt.AlignVCenter | Qt.AlignLeft,
                        fm.elidedText(wd["text"], Qt.ElideRight, int(max(x1 - x0 - 4, 0))))
 
         if self.sel_in is not None:
             xi = self._x(self.sel_in, a, b)
             xo = self._x(self.sel_out, a, b) if self.sel_out is not None else xi
-            p.fillRect(QRectF(xi, WORD_BAND, xo - xi, h - WORD_BAND), QColor(255, 200, 0, 40))
+            tint = QColor(text)
+            tint.setAlpha(45)   # lightens or darkens the selection, whatever the theme
+            p.fillRect(QRectF(xi, WORD_BAND, xo - xi, h - WORD_BAND), tint)
             p.setPen(QPen(QColor(80, 255, 120), 2))
             p.drawLine(QPointF(xi, 0), QPointF(xi, h))
             if self.sel_out is not None:
                 p.setPen(QPen(QColor(255, 90, 90), 2))
                 p.drawLine(QPointF(xo, 0), QPointF(xo, h))
         xp = self._x(self.playhead, a, b)
-        p.setPen(QPen(QColor(255, 255, 255), 1))
+        p.setPen(QPen(text, 1))
         p.drawLine(QPointF(xp, 0), QPointF(xp, h))
-        p.setPen(QColor(150, 150, 150))
+        p.setPen(self._dim())
         p.drawText(6, h - 6, f"{a:.2f}–{b:.2f}s  {(b - a) / max(w, 1) * 1000:.1f} ms/px  gain x{self.gain:.1f}")
 
     # --- interaction
