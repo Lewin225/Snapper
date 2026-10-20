@@ -30,9 +30,14 @@ def _read_window(path: str, start: float, end: Optional[float], stream: int = 0)
 class WhisperXBackend:
     capabilities = Capabilities(word_timing=True, phoneme_timing=False, speakers=False, needs_gpu=True)
 
-    def __init__(self, model: str = "large-v3", device: str = "cuda",
-                 compute_type: str = "float16", batch_size: int = 16, audio_stream: int = 0):
+    def __init__(self, model: str = "large-v3", device: str = "auto",
+                 compute_type: str = "auto", batch_size: int = 16, audio_stream: int = 0):
         self._model_name = model
+        if device == "auto":   # the GPU when PyTorch can see one, otherwise the CPU (slower, and 8-bit instead of 16-bit)
+            import torch
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        if compute_type == "auto":
+            compute_type = "float16" if device == "cuda" else "int8"
         self._device = device
         self._compute_type = compute_type
         self._batch_size = batch_size
@@ -84,6 +89,7 @@ class WhisperXBackend:
         gc.collect()
         try:
             import torch
-            torch.cuda.empty_cache()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
         except ImportError:
             pass

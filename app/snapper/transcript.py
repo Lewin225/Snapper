@@ -16,7 +16,6 @@ from PySide6.QtWidgets import (QAbstractItemView, QHeaderView, QLabel, QLineEdit
 from .titles import section_title
 
 SPEECH_BACKEND_DIR = Path(__file__).resolve().parents[2] / "speech_backend"
-WX_PYTHON = os.environ.get("SNAPPER_WX_PYTHON", os.path.expanduser("~/envs/wx/bin/python"))
 
 
 class Transcript:
@@ -88,13 +87,13 @@ class TranscriptJob(QObject):
     progress = Signal(float)
     done = Signal(bool, str)
 
-    def __init__(self, media: Path, audio_track: int = 0, parent=None):
+    def __init__(self, media: Path, python: Path, audio_track: int = 0, parent=None):
         super().__init__(parent)
         self._buf = b""
         self._err = b""
         self._saw_done = False
         self._proc = QProcess(self)
-        self._proc.setProgram(WX_PYTHON)
+        self._proc.setProgram(str(python))
         self._proc.setArguments(["-u", str(SPEECH_BACKEND_DIR / "transcribe_worker.py"), str(media),
                                  "--audio-stream", str(audio_track)])
         self._proc.readyReadStandardOutput.connect(self._read)
@@ -102,7 +101,7 @@ class TranscriptJob(QObject):
                                                                   bytes(self._proc.readAllStandardError())))
         self._proc.finished.connect(self._finished)
         self._proc.errorOccurred.connect(
-            lambda e: self.done.emit(False, f"could not start {WX_PYTHON}") if e == QProcess.FailedToStart else None)
+            lambda e: self.done.emit(False, f"could not start {python}") if e == QProcess.FailedToStart else None)
 
     def start(self):
         self._proc.start()
@@ -216,7 +215,7 @@ class TranscriptArea(QWidget):
         self.btn_file.clicked.connect(self.file_requested)
         page = QWidget()
         lay = QVBoxLayout(page)
-        lay.setContentsMargins(14, 8, 0, 0)   # left edge lines up with the clip editor below; space under the menu bar
+        lay.setContentsMargins(14, 8, 8, 0)   # left edge lines up with the clip editor below; space under the menu bar
         lay.addWidget(section_title("Transcript"))
         lay.addStretch(1)
         self.bar_empty = QProgressBar()      # progress while there are no lines to show yet
@@ -232,7 +231,7 @@ class TranscriptArea(QWidget):
         self.search.textChanged.connect(panel.filter)
         listing = QWidget()
         ll = QVBoxLayout(listing)
-        ll.setContentsMargins(14, 8, 0, 0)
+        ll.setContentsMargins(14, 8, 8, 0)
         ll.setSpacing(4)
         self.bar_list = QProgressBar()       # progress above the list while lines are still arriving
         self.bar_list.hide()

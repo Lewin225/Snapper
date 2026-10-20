@@ -70,7 +70,7 @@ class ClipsPanel(QWidget):
         foot.addWidget(self.export_settings_btn)
         foot.addWidget(self.export_btn)
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(0, 8, 14, 0)   # space under the menu bar, and off the window frame on the right
+        lay.setContentsMargins(8, 8, 14, 0)   # space under the menu bar; the same 8 px gap from the video as the transcript has, 14 px off the right edge
         lay.addWidget(section_title("Library"))
         lay.addLayout(self.filter_row)
         lay.addWidget(self.table, 1)

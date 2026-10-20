@@ -15,7 +15,7 @@ from . import media
 from . import export as exporting
 from .export_dialog import ExportSettingsDialog
 from .pathnames import INVALID_HELP, VALID_INPUT_PATTERN, clean_tag
-from . import launcher, recent
+from . import engine_dialog, launcher, recent
 from .progress import JobBars, ProxyBanner
 from .titles import section_title
 from .clips_panel import ClipsPanel
@@ -105,7 +105,7 @@ class MainWindow(QMainWindow):
 
         video_box = QWidget()
         vl = QVBoxLayout(video_box)
-        vl.setContentsMargins(0, 8, 0, 0)
+        vl.setContentsMargins(8, 8, 8, 0)
         self.proxy_banner = ProxyBanner()
         vl.addWidget(section_title("Playback"))
         vl.addWidget(self.proxy_banner)
@@ -537,7 +537,11 @@ class MainWindow(QMainWindow):
     def start_transcription(self):
         if self.transcript_job:
             return
-        job = TranscriptJob(self.media_path, self.project.audio_track, self)
+        status = engine_dialog.ensure_engine(self)   # says what is missing and offers to install it
+        if status is None:
+            self.statusBar().showMessage("WhisperX is not set up. Subtitles from the video or a file work without it.", 8000)
+            return
+        job = TranscriptJob(self.media_path, status.python, self.project.audio_track, self)
         self.transcript_area.set_busy("Transcribing…", 0.0)
         self.transcript_job = job
         job.lines_ready.connect(lambda lines: self._accumulate(lines))

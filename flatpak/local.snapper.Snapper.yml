@@ -17,6 +17,7 @@ finish-args:
   - --device=dri                      # GPU: video rendering and (with the host's NVIDIA GL extension) NVDEC
   - --socket=pulseaudio               # mpv's audio (PipeWire's PulseAudio socket)
   - --talk-name=org.freedesktop.FileManager1   # "Open containing folder" with the file selected
+  - --share=network                   # only for installing WhisperX (when asked to) and downloading its speech model
   # No filesystem access: videos and export folders are chosen through the file-chooser portal.
   # (The KDE colours come from the base app's xdg-config/kdeglobals:ro.)
 
