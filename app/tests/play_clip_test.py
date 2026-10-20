@@ -35,7 +35,10 @@ print(f"Play Clip: paused={win.player.paused} pos={win.player.pos:.3f} (out mark
 assert win.player.paused and abs(win.player.pos - 42.4) < 0.1, "should stop at the out marker"
 
 win.play_from_in()   # no button any more; the I-key position is the clip start
-QTest.qWait(4500)
+for _ in range(80):   # mpv in a test window can be slow to start: wait for it to pass the out marker
+    QTest.qWait(100)
+    if win.player.pos > 42.9:
+        break
 print(f"Play from In: paused={win.player.paused} pos={win.player.pos:.3f}")
 assert not win.player.paused and win.player.pos > 42.9, "Play from In must not stop at the out marker"
 win.player.stop()
