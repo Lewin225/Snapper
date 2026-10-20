@@ -214,6 +214,7 @@ class TranscriptArea(QWidget):
         self.btn_file.clicked.connect(self.file_requested)
         page = QWidget()
         lay = QVBoxLayout(page)
+        lay.setContentsMargins(14, 8, 0, 0)   # left edge lines up with the clip editor below; space under the menu bar
         lay.addStretch(1)
         self.bar_empty = QProgressBar()      # progress while there are no lines to show yet
         self.bar_empty.hide()
@@ -228,7 +229,7 @@ class TranscriptArea(QWidget):
         self.search.textChanged.connect(panel.filter)
         listing = QWidget()
         ll = QVBoxLayout(listing)
-        ll.setContentsMargins(0, 0, 0, 0)
+        ll.setContentsMargins(14, 8, 0, 0)
         ll.setSpacing(4)
         self.bar_list = QProgressBar()       # progress above the list while lines are still arriving
         self.bar_list.hide()

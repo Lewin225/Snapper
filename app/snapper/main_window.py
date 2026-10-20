@@ -96,7 +96,7 @@ class MainWindow(QMainWindow):
 
         video_box = QWidget()
         vl = QVBoxLayout(video_box)
-        vl.setContentsMargins(0, 0, 0, 0)
+        vl.setContentsMargins(0, 8, 0, 0)
         self.proxy_banner = ProxyBanner()
         vl.addWidget(self.proxy_banner)
         vl.addWidget(self.video, 1)

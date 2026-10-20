@@ -41,7 +41,7 @@ class ClipsPanel(QWidget):
         foot.addWidget(self.play)
         foot.addWidget(self.delete)
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setContentsMargins(0, 8, 14, 0)   # space under the menu bar, and off the window frame on the right
         lay.addLayout(self.filter_row)
         lay.addWidget(self.table, 1)
         lay.addLayout(foot)
