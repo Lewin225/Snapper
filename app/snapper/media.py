@@ -45,7 +45,7 @@ class MediaInfo:
 
 def probe(path: Path) -> MediaInfo:
     out = subprocess.run(["ffprobe", "-v", "error", "-show_entries",
-                          "format=duration:stream=index,codec_type,codec_name,channels:stream_tags=language,title",
+                          "format=duration:stream=index,codec_type,codec_name,channels,start_time:stream_tags=language,title",
                           "-of", "json", str(path)], capture_output=True, check=True, text=True).stdout
     j = json.loads(out)
     subs, audio = [], []
@@ -58,6 +58,10 @@ def probe(path: Path) -> MediaInfo:
                      "lang": tags.get("language", ""), "title": tags.get("title", "")}
             if kind == "audio":
                 entry["channels"] = s.get("channels", 0)
+                try:
+                    entry["start_time"] = float(s.get("start_time", 0.0))   # the track starts this late on the timeline
+                except ValueError:
+                    entry["start_time"] = 0.0
             target.append(entry)
     return MediaInfo(path, float(j["format"]["duration"]),
                      any(s.get("codec_type") == "video" for s in j.get("streams", [])), subs, audio)
@@ -173,9 +177,43 @@ class FfmpegJob(QObject):
             self.done.emit(False, err.strip() or f"ffmpeg exited with {code}")
 
 
-def audio_job(media: Path, duration: float, track: int = 0, parent=None) -> FfmpegJob:
-    return FfmpegJob(["-i", str(media), "-map", f"0:a:{track}", "-vn", "-ac", "1", "-ar", str(RATE), "-f", "s16le"],
-                     duration, audio_path(media, track), parent)
+SAMPLE_FORMATS = {16: ("s16le", "int16"), 24: ("s32le", "int32"), 32: ("f32le", "float32")}  # bit depth -> ffmpeg, numpy
+
+
+def pcm_args(info: MediaInfo, track: int, channels: int, rate: int, bits: int) -> list[str]:
+    """ffmpeg arguments that decode one audio track to raw PCM. The waveform and every export are decoded with
+    these same arguments (only channels/rate/depth differ), so sample N of one is the same moment as sample N of
+    the other. A track that starts late on the timeline is padded with silence, so sample 0 is always time 0."""
+    filters = []
+    start = info.audio[track].get("start_time", 0.0) if track < len(info.audio) else 0.0
+    if start > 0.0005:
+        filters.append(f"adelay={round(start * 1000)}:all=1")
+    # ffmpeg scales a surround downmix to avoid clipping for integer output but not for float output; fixing the
+    # scale makes 16-, 24- and 32-bit decodes (and so every export format) the same loudness.
+    filters.append("aresample=rematrix_maxval=1.0")
+    return ["-i", str(info.path), "-map", f"0:a:{track}", "-vn", "-af", ",".join(filters),
+            "-ac", str(channels), "-ar", str(rate), "-f", SAMPLE_FORMATS[bits][0]]
+
+
+def audio_job(info: MediaInfo, duration: float, track: int = 0, parent=None) -> FfmpegJob:
+    """The waveform's audio: mono, 16-bit, RATE."""
+    return FfmpegJob(pcm_args(info, track, 1, RATE, 16), duration, audio_path(info.path, track), parent)
+
+
+def export_pcm_path(media: Path, track: int, channels: int, rate: int, bits: int) -> Path:
+    if (channels, rate, bits) == (1, RATE, 16):
+        return audio_path(media, track)   # identical to the waveform's audio: exports slice that very file
+    return cache_dir(media) / f"export_a{track}_{channels}ch_{rate}_{bits}.pcm"
+
+
+def pcm_job(info: MediaInfo, duration: float, track: int, channels: int, rate: int, bits: int, parent=None) -> FfmpegJob:
+    return FfmpegJob(pcm_args(info, track, channels, rate, bits), duration,
+                     export_pcm_path(info.path, track, channels, rate, bits), parent)
+
+
+def open_pcm(path: Path, channels: int, bits: int) -> np.ndarray:
+    """A decoded PCM file as an (frames, channels) array, memory-mapped so RAM stays flat."""
+    return np.memmap(path, dtype=SAMPLE_FORMATS[bits][1], mode="r").reshape(-1, channels)
 
 
 def proxy_job(media: Path, duration: float, parent=None) -> FfmpegJob:

@@ -5,17 +5,20 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import QEvent, QObject, QSettings, Qt, QTimer
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtCore import QEvent, QObject, QRegularExpression, QSettings, Qt, QTimer
+from PySide6.QtGui import QAction, QKeySequence, QRegularExpressionValidator
 from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
                                QFormLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QPushButton, QSlider,
                                QSplitter, QTextEdit, QVBoxLayout, QWidget)
 
 from . import media
+from . import export as exporting
+from .export_dialog import ExportSettingsDialog
+from .pathnames import INVALID_HELP, VALID_INPUT_PATTERN, clean_tag
 from .progress import JobBars, ProxyBanner
 from .clips_panel import ClipsPanel
 from .editor import ClipEditor
-from .model import Clip, Project
+from .model import INVALID_HELP_TEXT, Clip, Project
 from .player import Player, VideoWidget
 from .transcript import Transcript, TranscriptArea, TranscriptJob, TranscriptPanel, parse_srt
 
@@ -79,6 +82,7 @@ class MainWindow(QMainWindow):
         self._audio_job: Optional[media.FfmpegJob] = None
         self.sub_labels: dict[int, str] = {}
         self._proxy_job: Optional[media.FfmpegJob] = None
+        self._export_worker: Optional[exporting.ExportWorker] = None
         self._on_proxy = False
 
         # --- widgets
@@ -176,6 +180,10 @@ class MainWindow(QMainWindow):
         self.clips.clip_play.connect(lambda c: self.player.play_range(c.start, c.end))
         self.clips.clip_delete.connect(self.delete_clip)
         self.clips.rename_requested.connect(self.rename_value)
+        self.clips.export_requested.connect(self.export_clips)
+        self.clips.export_settings_requested.connect(self.edit_export_settings)
+        self.project.dirty.connect(self._update_export_state)
+        self.project.structure_changed.connect(self._update_export_state)
         self.project.structure_changed.connect(self.on_structure_changed)
         self.project.value_renamed.connect(self._renamed)
         self.project.dirty.connect(self._schedule_save)
@@ -184,6 +192,7 @@ class MainWindow(QMainWindow):
         QApplication.instance().installEventFilter(self._key_filter)
 
         self._start_media()
+        self._update_export_state()
         self.setFocus()
 
     # ------------------------------------------------------------------ setup
@@ -257,8 +266,8 @@ class MainWindow(QMainWindow):
         g = m.addMenu("T&ags")
         self._action(g, "Add tag type…", self.add_tag_type)
         e = m.addMenu("&Export")
-        ex = self._action(e, "Export clips… (not built yet)", lambda: None)
-        ex.setEnabled(False)
+        self.act_export = self._action(e, "Export…", self.export_clips)
+        self._action(e, "Export settings…", self.edit_export_settings)
 
     def reset_layout(self):
         self.top.setSizes([200, 800])
@@ -398,7 +407,7 @@ class MainWindow(QMainWindow):
             self._audio_ready(track)
         elif self.info.audio:
             self.editor.wave.set_audio(None)
-            job = media.audio_job(self.media_path, self.info.duration, track)
+            job = media.audio_job(self.info, self.info.duration, track)
             self._audio_job = job
             self._run_job(job, "audio", lambda: self._audio_ready(track))
 
@@ -460,6 +469,7 @@ class MainWindow(QMainWindow):
         def done(ok, err):
             state.pop(name, None)
             self._refresh_job_label()
+            self._update_export_state()
             if ok:
                 on_ok()
             else:
@@ -626,12 +636,83 @@ class MainWindow(QMainWindow):
         if c.start is not None:
             self.player.play_range(c.start, c.end)
 
+    # ------------------------------------------------------------------ export
+    def _update_export_state(self, *_):
+        s, running = self.project.export_settings, self._export_worker is not None or "export" in self._job_state \
+            or "pcm" in self._job_state
+        if s is None:
+            enabled, tip = False, "Set up Export Settings first."
+        elif not self.project.clips:
+            enabled, tip = False, "There are no clips in the library to export."
+        elif running:
+            enabled, tip = False, "An export is already running."
+        else:
+            enabled, tip = True, "Export every clip in the library using the export settings."
+        self.clips.set_export_enabled(enabled, tip)
+        self.act_export.setEnabled(enabled)
+
+    def edit_export_settings(self):
+        dlg = ExportSettingsDialog(self.project, self)
+        if dlg.exec():
+            self.project.set_export_settings(dlg.settings().to_json())
+
+    def export_clips(self):
+        if self.project.export_settings is None or not self.project.clips or self._export_worker is not None:
+            return
+        s = exporting.ExportSettings.from_json(self.project.export_settings)
+        last = QSettings("snapper", "snapper").value("export/last_dir", str(self.media_path.parent))
+        folder = QFileDialog.getExistingDirectory(self, "Export clips to…", str(last))
+        if not folder:
+            return
+        QSettings("snapper", "snapper").setValue("export/last_dir", folder)
+        track = self.project.audio_track
+        path = media.export_pcm_path(self.media_path, track, s.channels, s.sample_rate, s.bit_depth)
+        if path.exists():
+            self._run_export(s, path, Path(folder))
+            return
+        job = media.pcm_job(self.info, self.info.duration, track, s.channels, s.sample_rate, s.bit_depth)
+        self._run_job(job, "pcm", lambda: self._run_export(s, path, Path(folder)))
+        self._update_export_state()
+
+    def _run_export(self, s, pcm_path: Path, folder: Path):
+        pcm = media.open_pcm(pcm_path, s.channels, s.bit_depth)
+        worker = exporting.ExportWorker(self.project, s, pcm, folder, self)
+        self._export_worker = worker
+        self._job_state["export"] = 0.0
+        self._refresh_job_label()
+        worker.progress.connect(lambda p: self._job_progress("export", p))
+        worker.finished_with.connect(lambda res, err: self._export_done(res, err, folder, pcm_path, s))
+        worker.start()
+        self._update_export_state()
+
+    def _export_done(self, res, err: str, folder: Path, pcm_path: Path, s):
+        self._export_worker = None
+        self._job_state.pop("export", None)
+        self._refresh_job_label()
+        if pcm_path != media.audio_path(self.media_path, self.project.audio_track):
+            try:
+                pcm_path.unlink()   # a temporary decode; the waveform's own audio is kept
+            except OSError:
+                pass
+        self._update_export_state()
+        if err:
+            QMessageBox.warning(self, "Export failed", err)
+            return
+        msg = f"Exported {len(res.files)} clips to {folder}"
+        if res.cancelled:
+            msg = "Export cancelled. " + msg
+        self.statusBar().showMessage(msg, 15000)
+        if res.skipped:
+            QMessageBox.warning(self, "Export", msg + "\n\nSkipped:\n" + "\n".join(res.skipped[:15]))
+
     # ------------------------------------------------------------------ tags
     def add_tag_type(self):
         dlg = QDialog(self)
         dlg.setWindowTitle("Add tag type")
         name = QLineEdit()
         name.setPlaceholderText("for example emotion, loudness, overlap")
+        name.setValidator(QRegularExpressionValidator(QRegularExpression(VALID_INPUT_PATTERN)))
+        name.setToolTip(INVALID_HELP)
         kind = QComboBox()
         for label, k in (("String (pick or type a value)", "string"), ("Int (a number)", "int"),
                          ("Bool (yes / no checkbox)", "bool")):
@@ -643,8 +724,15 @@ class MainWindow(QMainWindow):
         buttons.accepted.connect(dlg.accept)
         buttons.rejected.connect(dlg.reject)
         form.addRow(buttons)
-        if dlg.exec() and name.text().strip():
-            self.project.add_tag_type(name.text().strip().lower(), kind.currentData())
+        while dlg.exec():
+            tag = name.text().strip().lower()
+            problem = Project.tag_name_problem(tag)
+            if tag in self.project.tag_kinds:
+                problem = f"There is already a tag called '{tag}'."
+            if problem is None:
+                self.project.add_tag_type(tag, kind.currentData())
+                return
+            QMessageBox.warning(self, "Add tag type", problem)
 
     def rename_value(self, tag: str):
         vals = self.project.values(tag)
@@ -654,8 +742,12 @@ class MainWindow(QMainWindow):
         if not ok:
             return
         new, ok = QInputDialog.getText(self, f"Rename {tag}", f"New name for {old}:", text=old)
-        if ok and new.strip() and new.strip() != old:
-            self.project.rename_value(tag, old, new.strip())
+        if not ok or not new.strip() or new.strip() == old:
+            return
+        if clean_tag(new) != new.strip():
+            QMessageBox.warning(self, f"Rename {tag}", INVALID_HELP_TEXT)
+            return
+        self.project.rename_value(tag, old, new.strip())
 
     # ------------------------------------------------------------------ playback + keys
     def on_position(self, t: float):
@@ -759,6 +851,9 @@ class MainWindow(QMainWindow):
             j.kill()
         if self.transcript_job:
             self.transcript_job.kill()
+        if self._export_worker:
+            self._export_worker.cancel()
+            self._export_worker.wait(5000)
         self.video.close()
         self.player.shutdown()
         super().closeEvent(e)

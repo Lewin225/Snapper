@@ -150,7 +150,7 @@ Bake-off on a 10-minute section of a real episode (RTX 3080 Ti, container capped
 
 Working: video with scrub proxy (generated and swapped in the background), waveform editor with word labels and snapping, transcript panel (WhisperX via a subprocess worker, or subtitles from a file or embedded), I/O/Enter cutting with sticky tags and quick keys, tag types and values with filters, global value rename, string/int/bool tag kinds, per-episode project file (`<episode>.snapper.json`), caches in `~/.cache/snapper`.
 
-Not built: export (next), isolation job and the original/isolated toggle, speaker pre-population, phoneme timings, undo, an installer.
+Not built: MP3 export (next), flagged-clip handling at export, isolation job and the original/isolated toggle, speaker pre-population, phoneme timings, undo, an installer.
 
 ## Open research items
 
@@ -187,3 +187,10 @@ Not built: export (next), isolation job and the original/isolated toggle, speake
 
 ## Theme
 The app follows the system theme. With a real platform theme (the KDE Flatpak runtime) Qt styles everything and the app forces nothing. Otherwise the palette is built from the user's KDE colour scheme (`kdeglobals`, which a Flatpak needs `--filesystem=xdg-config/kdeglobals:ro` to read), falling back to Qt's light/dark palette, and it updates live when either changes. Colours in custom widgets, including the waveform (background, wave, words, selection), come from the palette; the video area stays black. `SNAPPER_KDEGLOBALS` overrides the file's path (dev container).
+
+## Export (WAV first)
+- **Project-level settings**, stored in the project file, edited in a pop-up ("Export Settings…" under the library); **Export** (the primary button, also in the Export menu) is enabled only once the project has settings and clips. Export asks for the destination folder through the system dialog.
+- **Settings:** file-name template (`{id}`, `{n}`, `{start}` in ms, `{text}`, and any tag name as `{tag}`; no path separators); format (WAV now, MP3 next); mono/stereo; sample rate; format options (WAV bit depth 16/24/32-float; MP3 will add bitrate/quality); **folders by tag**: an ordered list of tags (first = top folder, then sub-folders; clips with no value go in `_none`; bool tags give Yes/No); which **text field** the clip text is written to (WAV LIST/INFO: Comment ICMT, Title INAM or Subject ISBJ, or none); whether to **add the clip's tags to the file** (JSON in a custom `snpr` chunk).
+- **Sample accuracy:** a clip's start/end times become sample indices `round(t * rate)` and exactly those samples are written. The waveform audio and every export are decoded with the same ffmpeg arguments (`media.pcm_args`: same track, the track's start offset padded as silence, a fixed downmix scale so 16/24/32-bit decodes have the same loudness), so sample N is the same moment everywhere. A mono 16-bit 44.1 kHz export slices the waveform's own cache file; other formats decode a temporary file (removed after the export). Tested sample-for-sample against the waveform, and stereo/24-bit/float decodes tested for zero-lag alignment and equal level.
+- **Safe names:** tag names and values cannot contain `\ / : * ? " < > |` or control characters (the tag boxes refuse them, rename and add-tag dialogs reject them, loaded values are cleaned); every generated file/folder name is also cleaned (reserved device names, trailing dots/spaces, `..`), clashes get `_2`, `_3` (compared case-insensitively), and no path can leave the export folder. Tag names `id`, `n`, `start`, `text` are reserved for the template.
+- Existing files with the same name in the destination are overwritten.

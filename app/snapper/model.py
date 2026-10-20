@@ -11,6 +11,9 @@ from typing import Any, Optional
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QObject, QSortFilterProxyModel, Qt, Signal
 
 from . import media as media_cache
+from .pathnames import INVALID_HELP, clean_tag
+
+INVALID_HELP_TEXT = INVALID_HELP + " (names are used for folders and files)."
 
 STRING, INT, BOOL = "string", "int", "bool"
 KINDS = (STRING, INT, BOOL)
@@ -59,6 +62,7 @@ class Project(QObject):
         self.proxy_enabled = True                    # use (and generate) the fast-scrubbing proxy video
         self.selected_clip: Optional[int] = None     # id of the clip open in the editor, if any
         self.transcript: Optional[list[dict]] = None  # the transcript lines (with word times), kept with the project
+        self.export_settings: Optional[dict] = None   # see export.ExportSettings; None until the user sets it up
         self._next_id = 1
         legacy = media.with_name(media.name + ".snapper.json")  # early builds saved next to the video
         if self.path.exists():
@@ -96,6 +100,7 @@ class Project(QObject):
         self.proxy_enabled = d.get("proxy_enabled", True)
         self.selected_clip = d.get("selected_clip")
         self.transcript = d.get("transcript")
+        self.export_settings = d.get("export_settings")
         self.clips = [Clip.from_json(c) for c in d.get("clips", [])]
         self._next_id = d.get("next_id", max((c.id for c in self.clips), default=0) + 1)
         for c, raw in zip(self.clips, d.get("clips", [])):   # older files kept flags apart from tags
@@ -116,7 +121,7 @@ class Project(QObject):
             "audio_track": self.audio_track, "selected_clip": self.selected_clip,
             "tag_types": self.tag_types, "tag_kinds": self.tag_kinds, "tag_values": self.tag_values,
             "next_id": self._next_id, "clips": [c.to_json() for c in self.clips],
-            "transcript": self.transcript}, indent=1))
+            "transcript": self.transcript, "export_settings": self.export_settings}, indent=1))
         os.replace(tmp, self.path)
 
     def save_as(self, path: Path):
@@ -125,6 +130,10 @@ class Project(QObject):
 
     def set_transcript(self, lines: list[dict]):
         self.transcript = lines
+        self.dirty.emit()
+
+    def set_export_settings(self, settings: dict):
+        self.export_settings = settings
         self.dirty.emit()
 
     def select(self, clip_id: Optional[int]):
@@ -137,6 +146,8 @@ class Project(QObject):
         """Remembers tag values in first-seen order; True if a new one appeared."""
         new = False
         for t, v in clip.tags.items():
+            if self.tag_kinds.get(t) == STRING and isinstance(v, str) and clean_tag(v) != v:
+                v = clip.tags[t] = clean_tag(v)   # a value must always be usable as a folder name
             if self.tag_kinds.get(t) == STRING and v and v not in self.tag_values.setdefault(t, []):
                 self.tag_values[t].append(v)
                 new = True
@@ -186,8 +197,21 @@ class Project(QObject):
             return [str(v) for v in sorted({c.tags[tag] for c in self.clips if tag in c.tags})]
         return self.values(tag)
 
+    RESERVED_TAG_NAMES = ("id", "n", "start", "text")   # file-name template tokens
+
+    @classmethod
+    def tag_name_problem(cls, name: str) -> Optional[str]:
+        """Why `name` cannot be a tag type name, or None if it can."""
+        if not name.strip():
+            return "The name is empty."
+        if clean_tag(name) != name.strip():
+            return INVALID_HELP_TEXT
+        if name.strip().lower() in cls.RESERVED_TAG_NAMES:
+            return f"'{name.strip()}' is reserved for file naming ({', '.join(cls.RESERVED_TAG_NAMES)})."
+        return None
+
     def add_tag_type(self, name: str, kind: str = STRING):
-        if name and name not in self.tag_types and kind in KINDS:
+        if name and name not in self.tag_types and kind in KINDS and not self.tag_name_problem(name):
             self.tag_types.append(name)
             self.tag_kinds[name] = kind
             self.structure_changed.emit()
@@ -195,6 +219,9 @@ class Project(QObject):
 
     def rename_value(self, tag: str, old: str, new: str):
         """Renames a tag value across every clip (e.g. voice1 -> Alastor)."""
+        new = clean_tag(new)
+        if not new:
+            return
         merged: list[str] = []
         for v in self.tag_values.get(tag, []):
             v = new if v == old else v

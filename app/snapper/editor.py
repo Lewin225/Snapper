@@ -3,11 +3,13 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QRegularExpression, Qt, Signal
+from PySide6.QtGui import QRegularExpressionValidator
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QSizePolicy,
                                QSpinBox, QVBoxLayout, QWidget)
 
 from .model import BOOL, INT, STRING, Clip, Project
+from .pathnames import INVALID_HELP, VALID_INPUT_PATTERN, clean_tag
 from .scrubber import TimeScrubber
 from .waveform import WaveformWidget
 
@@ -145,6 +147,9 @@ class ClipEditor(QWidget):
                 box.setInsertPolicy(QComboBox.NoInsert)
                 box.setMinimumWidth(150)
                 box.setFocusPolicy(Qt.ClickFocus)
+                # tag values become folder names on export, so characters a path can't hold are not accepted
+                box.lineEdit().setValidator(QRegularExpressionValidator(QRegularExpression(VALID_INPUT_PATTERN)))
+                box.setToolTip(INVALID_HELP)
                 box.activated.connect(lambda _i, t=t: self._tag_edited(t))
                 box.lineEdit().editingFinished.connect(lambda t=t: self._tag_edited(t))
                 self.tag_boxes[t] = box
@@ -254,7 +259,10 @@ class ClipEditor(QWidget):
             n = self.int_boxes[tag].value()
             v = None if n == INT_UNSET else n
         else:
-            v = self.tag_boxes[tag].currentText().strip() or None
+            box = self.tag_boxes[tag]
+            v = clean_tag(box.currentText()) or None   # also trims trailing dots/spaces, which paths dislike
+            if (v or "") != box.currentText():
+                box.setCurrentText(v or "")
         if v is not None:
             self.clip.tags[tag] = v
         else:

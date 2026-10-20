@@ -5,6 +5,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QHBoxLayout, QHeaderView, QLabel, QPushButton,
                                QTableView, QVBoxLayout, QWidget)
 
+from .editor import SAVE_STYLE
 from .model import Clip, ClipFilter, ClipTableModel, Project
 
 
@@ -13,6 +14,8 @@ class ClipsPanel(QWidget):
     clip_play = Signal(object)
     clip_delete = Signal(object)
     rename_requested = Signal(str)   # tag type
+    export_requested = Signal()
+    export_settings_requested = Signal()
 
     def __init__(self, project: Project):
         super().__init__()
@@ -36,6 +39,18 @@ class ClipsPanel(QWidget):
             b.setFocusPolicy(Qt.NoFocus)
         self.play.clicked.connect(lambda: self.current() and self.clip_play.emit(self.current()))
         self.delete.clicked.connect(lambda: self.current() and self.clip_delete.emit(self.current()))
+        self.export_btn = QPushButton("Export")
+        self.export_btn.setStyleSheet(SAVE_STYLE)
+        self.export_settings_btn = QPushButton("Export Settings…")
+        for b in (self.export_btn, self.export_settings_btn):
+            b.setFocusPolicy(Qt.NoFocus)
+        self.export_btn.clicked.connect(self.export_requested)
+        self.export_settings_btn.clicked.connect(self.export_settings_requested)
+        self.set_export_enabled(False, "")
+        export_row = QHBoxLayout()
+        export_row.addStretch(1)
+        export_row.addWidget(self.export_settings_btn)
+        export_row.addWidget(self.export_btn)
         foot = QHBoxLayout()
         foot.addWidget(self.count, 1)
         foot.addWidget(self.play)
@@ -45,11 +60,18 @@ class ClipsPanel(QWidget):
         lay.addLayout(self.filter_row)
         lay.addWidget(self.table, 1)
         lay.addLayout(foot)
+        lay.addLayout(export_row)
+        lay.addSpacing(8)
         project.structure_changed.connect(self.rebuild_filters)
         project.structure_changed.connect(self._update_count)
         self.proxy.layoutChanged.connect(self._update_count)
         self.rebuild_filters()
         self._update_count()
+
+    def set_export_enabled(self, enabled: bool, tip: str):
+        """Export is the primary action, available once the project has export settings (and clips)."""
+        self.export_btn.setEnabled(enabled)
+        self.export_btn.setToolTip(tip)
 
     def _clip(self, proxy_index) -> Clip:
         return self.model.clip_at(self.proxy.mapToSource(proxy_index).row())

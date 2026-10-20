@@ -7,7 +7,8 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QProgressBar, QWidget
 
 JOB_NAMES = {"proxy": "Scrub proxy", "audio": "Decoding audio", "transcript": "Transcribing",
-             "subtitles": "Reading subtitles"}
+             "subtitles": "Reading subtitles",
+             "pcm": "Preparing audio", "export": "Exporting"}
 
 
 def make_bar(width: int = 110) -> QProgressBar:
