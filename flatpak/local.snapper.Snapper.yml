@@ -1,0 +1,171 @@
+# Snapper as a Flatpak on the KDE runtime (real Breeze theme, portals for file dialogs).
+#   flatpak-builder --user --install --force-clean build-dir local.snapper.Snapper.yml
+#   flatpak run local.snapper.Snapper [video-or-project]
+# The app id is a placeholder: change it (and the file names) to one you own before publishing anywhere.
+id: local.snapper.Snapper
+runtime: org.kde.Platform
+runtime-version: '6.11'
+sdk: org.kde.Sdk
+base: io.qt.PySide.BaseApp          # PySide6 + Python 3.13 + numpy, matched to the runtime's Qt
+base-version: '6.11'
+command: snapper
+
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri                      # GPU: video rendering and (with the host's NVIDIA GL extension) NVDEC
+  - --socket=pulseaudio               # mpv's audio (PipeWire's PulseAudio socket)
+  - --talk-name=org.freedesktop.FileManager1   # "Open containing folder" with the file selected
+  # No filesystem access: videos and export folders are chosen through the file-chooser portal.
+  # (The KDE colours come from the base app's xdg-config/kdeglobals:ro.)
+
+cleanup:
+  - '*.la'
+  - '*.a'
+  - /include
+  - /lib/pkgconfig
+  - /share/man
+
+modules:
+  - name: nv-codec-headers          # lets ffmpeg/mpv use the host's NVDEC through the NVIDIA GL extension
+    buildsystem: simple
+    build-commands:
+      - make install PREFIX=/app
+    sources:
+      - type: git
+        url: https://github.com/FFmpeg/nv-codec-headers.git
+        tag: n13.0.19.1
+        commit: 88fee5c37318c991a8762d423530f91681e32e3a
+
+  - name: lame                      # MP3 encoder
+    config-opts:
+      - --disable-static
+      - --disable-frontend
+    sources:
+      - type: archive
+        url: https://downloads.sourceforge.net/project/lame/lame/3.100/lame-3.100.tar.gz
+        sha256: ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e
+
+  - name: x264                      # encoder for the scrub proxy video
+    config-opts:
+      - --disable-cli
+      - --enable-shared
+    sources:
+      - type: git
+        url: https://code.videolan.org/videolan/x264.git
+        commit: b35605ace3ddf7c1a5d67a2eb553f034aef41d55
+
+  - name: uchardet
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DBUILD_STATIC=0
+      - -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+    sources:
+      - type: archive
+        url: https://www.freedesktop.org/software/uchardet/releases/uchardet-0.0.8.tar.xz
+        sha256: e97a60cfc00a1c147a674b097bb1422abd9fa78a2d9ce3f3fdcc2e78a34ac5f0
+
+  - name: libass
+    config-opts:
+      - --disable-static
+      - --enable-asm
+      - --enable-harfbuzz
+      - --enable-fontconfig
+    sources:
+      - type: git
+        url: https://github.com/libass/libass.git
+        tag: 0.17.5
+        commit: 4a05d8127f525943ebf45fdc6497c9e665947f0d
+
+  - name: ffmpeg                    # the ffmpeg/ffprobe programs the app runs, and libav* for mpv
+    config-opts:
+      - --disable-debug
+      - --disable-doc
+      - --disable-static
+      - --enable-shared
+      - --enable-gpl
+      - --enable-version3
+      - --enable-libx264
+      - --enable-libmp3lame
+      - --enable-libass
+      - --enable-libfreetype
+      - --enable-libdav1d
+      - --enable-libopus
+      - --enable-libvorbis
+      - --enable-libvpx
+      - --enable-libdrm
+      - --enable-vaapi
+      - --enable-ffnvcodec
+    sources:
+      - type: git
+        url: https://github.com/FFmpeg/FFmpeg.git
+        tag: n9.0.1
+        commit: bf1b838f2ab88b4f8fd83443325c782ea0e0f7fa
+
+  - name: libplacebo
+    buildsystem: meson
+    config-opts:
+      - -Dvulkan=enabled
+      - -Dshaderc=enabled
+    sources:
+      - type: git
+        url: https://github.com/haasn/libplacebo.git
+        tag: v7.360.1
+        commit: cee9b076f2c63104ccfd497fa79c39a867293ec4
+
+  - name: mpv                       # libmpv only: the app embeds it, there is no player window
+    buildsystem: meson
+    config-opts:
+      - -Dlibmpv=true
+      - -Dcplayer=false
+      - -Dlua=disabled
+      - -Djavascript=disabled
+      - -Dbuild-date=false
+      - -Dwerror=false
+      - -Dcuda-hwaccel=enabled
+      - -Dcuda-interop=enabled
+      - -Dgl=enabled
+      - -Degl=enabled
+      - -Dx11=disabled                # Qt owns the window; mpv only renders into it (libmpv render API)
+      - -Dwayland=disabled
+      - -Dvaapi=disabled              # needs one of mpv's own display backends; NVDEC is what this machine uses
+      - -Dpulse=enabled
+      - -Duchardet=enabled
+    sources:
+      - type: git
+        url: https://github.com/mpv-player/mpv.git
+        tag: v0.41.0
+        commit: 41f6a645068483470267271e1d09966ca3b9f413
+
+  - name: python-mpv
+    buildsystem: simple
+    build-commands:
+      - pip3 install --verbose --no-index --find-links="file://${PWD}" --prefix=${FLATPAK_DEST} --no-build-isolation python_mpv
+    sources:
+      - type: file
+        url: https://files.pythonhosted.org/packages/22/f3/4c632eaacebfc62ab9414586137aecf6c0ea2a1e99708cf5a4c0dec13ae0/python_mpv-1.0.8-py3-none-any.whl
+        sha256: b5296403e990fb7348df4ca2211937a030f524bf638657bda7e45a00bc2df0cd
+
+  - name: snapper
+    buildsystem: simple
+    build-commands:
+      # The package and the speech backend sit side by side: the app finds the backend at ../speech_backend
+      - mkdir -p /app/lib/snapper-app
+      - cp -r snapper speech_backend /app/lib/snapper-app/
+      - find /app/lib/snapper-app -name __pycache__ -prune -exec rm -rf {} +
+      - install -Dm755 snapper.sh /app/bin/snapper
+      - install -Dm644 local.snapper.Snapper.desktop /app/share/applications/local.snapper.Snapper.desktop
+      - install -Dm644 local.snapper.Snapper.svg /app/share/icons/hicolor/scalable/apps/local.snapper.Snapper.svg
+      - install -Dm644 local.snapper.Snapper.metainfo.xml /app/share/metainfo/local.snapper.Snapper.metainfo.xml
+    sources:
+      - type: dir
+        path: ../app/snapper
+        dest: snapper
+      - type: dir
+        path: ../speech_backend
+        dest: speech_backend
+      - type: dir
+        path: .
+        skip: [local.snapper.Snapper.yml]

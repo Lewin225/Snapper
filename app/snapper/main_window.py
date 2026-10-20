@@ -15,6 +15,7 @@ from . import media
 from . import export as exporting
 from .export_dialog import ExportSettingsDialog
 from .pathnames import INVALID_HELP, VALID_INPUT_PATTERN, clean_tag
+from . import launcher, recent
 from .progress import JobBars, ProxyBanner
 from .titles import section_title
 from .clips_panel import ClipsPanel
@@ -143,7 +144,7 @@ class MainWindow(QMainWindow):
         root.setCollapsible(0, False)  # everything on the left
         root.setCollapsible(1, True)   # clip list
         video_box.setMinimumSize(max(360, controls.sizeHint().width()), 320)
-        self.editor.setMinimumHeight(340)   # includes the pane title
+        # (the editor's own layout decides its minimum height: title, waveform, values, tags and text rows)
         left.setMinimumWidth(640)
         self.transcript_area.setMinimumWidth(120)
         self.clips.setMinimumWidth(240)
@@ -258,8 +259,10 @@ class MainWindow(QMainWindow):
     def _build_menu(self):
         m = self.menuBar()
         f = m.addMenu("&File")
-        self._action(f, "&Open episode…", self.open_dialog, QKeySequence.Open)
+        self._action(f, "&Open video…", self.open_dialog, QKeySequence.Open)
         self._action(f, "Open &project…", self.open_project_dialog)
+        self.menu_recent = f.addMenu("Open &recent")
+        self.menu_recent.aboutToShow.connect(self._fill_recent_menu)
         self._action(f, "Save project &as…", self.save_project_as)
         f.addSeparator()
         self._action(f, "&Quit", self.close, QKeySequence.Quit)
@@ -929,24 +932,27 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ misc
     def open_dialog(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Open episode", str(self.media_path.parent))
+        path, _ = QFileDialog.getOpenFileName(self, "Open video", str(self.media_path.parent), launcher.VIDEO_FILTER)
         if path:
             self._open(Path(path))
 
     def open_project_dialog(self):
         path, _ = QFileDialog.getOpenFileName(self, "Open project", str(media.projects_dir()),
-                                              "Snapper projects (*.snapper.json)")
+                                              launcher.PROJECT_FILTER)
         if path:
             self._open(Path(path))
 
+    def _fill_recent_menu(self):
+        self.menu_recent.clear()
+        entries = [e for e in recent.entries() if e.path.resolve() != self.project.path.resolve()]
+        for e in entries:
+            self.menu_recent.addAction(f"{e.video}  ({e.clips} clips)", lambda _c=False, p=e.path: self._open(p))
+        self.menu_recent.setEnabled(bool(entries))
+
     def _open(self, path: Path):
-        try:
-            w = MainWindow(path)   # the new window opens first: closing the only window would break GL
-        except Exception as e:
-            QMessageBox.warning(self, "Open", str(e))
-            return
-        w.show()
-        self.close()
+        w = launcher.open_path(path, self)   # the new window opens first: closing the only window would break GL
+        if w is not None:
+            self.close()
 
     def save_project_as(self):
         path, _ = QFileDialog.getSaveFileName(self, "Save project as", str(self.project.path),

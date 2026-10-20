@@ -25,7 +25,7 @@ class Player(QObject):
         # 10-bit nvdec output renders as noise in the Qt GL context, so frames are converted to 8-bit.
         extra = {"ao": os.environ["SNAPPER_AO"]} if os.environ.get("SNAPPER_AO") else {}  # debugging aid
         self.mpv = mpv.MPV(**extra, vo="libmpv", keep_open="yes", pause=True, audio_channels="stereo", hr_seek="yes",
-                           vf="format=yuv420p", loglevel="warn",
+                           vf="format=yuv420p", loglevel=os.environ.get("SNAPPER_MPV_LEVEL", "warn"),
                            log_handler=lambda lvl, comp, msg: (lvl in ("error", "fatal") or LOG_ALL) and
                            print(f"[mpv {lvl}] {comp}: {msg.strip()}", flush=True))
         self.pos, self.duration, self.paused = 0.0, 0.0, True

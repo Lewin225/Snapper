@@ -3,3 +3,8 @@ __pycache__/
 *.tmp
 *.snapper.json
 *.png
+
+# Flatpak build output
+flatpak/build-dir/
+flatpak/.flatpak-builder/
+flatpak/repo/

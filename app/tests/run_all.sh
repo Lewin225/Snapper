@@ -7,7 +7,7 @@ export SNAPPER_HWDEC=${SNAPPER_HWDEC:-nvdec-copy} QT_QPA_PLATFORM=${QT_QPA_PLATF
 export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json
 failed=0
 for t in smoke editor_test typing_test layout_test play_clip_test progress_test project_test tag_kinds_test theme_test \
-         prune_test transcript_ui_test export_test export_ui_test; do
+         prune_test launcher_test transcript_ui_test export_test export_ui_test; do
     echo "=== $t"
     if [ "$t" = export_test ]; then QT_QPA_PLATFORM=offscreen "$PY" -u "tests/$t.py"; else "$PY" -u "tests/$t.py"; fi 2>&1 \
         | grep -v "INVALID_ENUM\|pci id\|pw.conf\|dri2\|Xcb EGL\|propagateSizeHints" | tail -4

@@ -14,7 +14,7 @@ from typing import Optional
 
 from PySide6.QtCore import QFileSystemWatcher
 from PySide6.QtGui import QColor, QGuiApplication, QPalette
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QStyleFactory
 
 # QPalette role -> (kdeglobals section, key)
 _ROLES = {
@@ -81,7 +81,8 @@ def apply_system_theme(app: QApplication):
     global _watcher
     if "kde" in os.environ.get("QT_QPA_PLATFORMTHEME", "").lower():
         return  # the KDE platform theme supplies style and colours itself
-    app.setStyle("Fusion")
+    # Breeze when the Qt install has it (the KDE Flatpak runtime), otherwise Fusion with the colours of the KDE scheme
+    app.setStyle("Breeze" if "Breeze" in QStyleFactory.keys() else "Fusion")
 
     def refresh():
         pal = palette_from_kdeglobals(kdeglobals_path())

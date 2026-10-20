@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>local.snapper.Snapper</id>
+  <name>Snapper</name>
+  <summary>Cut, tag and export dialogue from an episode</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LicenseRef-proprietary</project_license>
+  <description>
+    <p>Bulk audio snipper and transcriber: cut spoken lines from a video by hand with a transcript to guide you, tag them, and export one audio file per line.</p>
+  </description>
+  <launchable type="desktop-id">local.snapper.Snapper.desktop</launchable>
+  <content_rating type="oars-1.1"/>
+  <releases><release version="0.1.0" date="2026-10-20"/></releases>
+</component>

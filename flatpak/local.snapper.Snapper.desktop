@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Snapper
+Comment=Cut, tag and export dialogue from an episode
+Exec=snapper %f
+Icon=local.snapper.Snapper
+Terminal=false
+Categories=AudioVideo;Audio;AudioVideoEditing;
+MimeType=video/mp4;video/x-matroska;video/quicktime;video/webm;video/x-msvideo;
+StartupNotify=true
