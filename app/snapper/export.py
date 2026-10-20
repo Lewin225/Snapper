@@ -30,7 +30,7 @@ WAV_BIT_DEPTHS = (16, 24, 32)           # 32 is floating point
 WAV_TEXT_FIELDS = {"comment": "ICMT", "title": "INAM", "subject": "ISBJ"}
 TOKENS = ("id", "n", "start", "text")   # file-name template tokens; every tag name is a token too
 UNTAGGED_FOLDER = "_none"
-DEFAULT_TEMPLATE = "{character}_{n}"
+DEFAULT_TEMPLATE = "{character}_{text}"
 _TOKEN_RE = re.compile(r"\{([^{}]*)\}")
 
 

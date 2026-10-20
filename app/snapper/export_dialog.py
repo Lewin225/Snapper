@@ -175,7 +175,7 @@ class ExportSettingsDialog(QDialog):
             legend.addWidget(desc, i, 1)
         self.placeholders.addLayout(grid)
         self.placeholders.addLayout(legend)
-        ex = QLabel("Example: <b>{character}_{n}</b> gives <i>Alastor_007.wav</i>. Folders are set separately, below.")
+        ex = QLabel("Example: <b>{character}_{text}</b> gives <i>Alastor_But, yeah, that might be fun.wav</i>. Folders are set separately, below.")
         ex.setWordWrap(True)
         ex.setStyleSheet("color: gray;")
         self.placeholders.addWidget(ex)
