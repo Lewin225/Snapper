@@ -375,6 +375,7 @@ class ExportManager(QObject):
         self._sig: dict[int, str] = {}
         self._failed_sig: dict[int, Optional[str]] = {}   # clip id -> its signature when it failed
         self._sigs_at_submit: dict[int, str] = {}
+        self._delete_old: dict[int, bool] = {}
         self._cleanup_roots: list[Path] = []   # earlier export folders whose files may be deleted once re-exported   # clip id -> signature when it was queued
         self._settings: Optional[tuple[int, ExportSettings]] = None
         self._worker: Optional[_Worker] = None
@@ -467,9 +468,19 @@ class ExportManager(QObject):
             snap = replace(c, tags=dict(c.tags))   # the clip may be edited while it waits
             self._sigs_at_submit[c.id] = export_signature(c, settings, self.project.audio_track)
             self._worker.jobs.put((snap, plan[c.id], kinds, settings, str(pcm_path), c.export_path,
-                                   self._old_root(c.export_path, settings)))
+                                   self._old_root(c.id, c.export_path, settings)))
 
-    cleanup_answer: Optional[bool] = None   # the user's answer about old export folders; asked once per session
+    # The user's answer about a clip's old file, until that clip has been exported again: True = delete it once the new
+    # copy is written, False = leave it. Clips with no entry have not been asked about yet.
+    def decide_old_file(self, clip_ids: list[int], delete: bool):
+        for i in clip_ids:
+            self._delete_old[i] = delete
+
+    def forget_decisions(self):
+        self._delete_old.clear()
+
+    def undecided(self, clips: list[Clip]) -> list[Clip]:
+        return [c for c in clips if c.id not in self._delete_old]
 
     def moved_files(self, clips: list[Clip], settings: ExportSettings) -> list[Clip]:
         """Clips whose earlier export is still on disk but would now be written somewhere else (a different folder,
@@ -488,11 +499,15 @@ class ExportManager(QObject):
         if root not in self._cleanup_roots:
             self._cleanup_roots.append(root)
 
-    def _old_root(self, old: Optional[str], settings: ExportSettings) -> Optional[str]:
+    def _old_root(self, clip_id: int, old: Optional[str], settings: ExportSettings) -> Optional[str]:
         """Where an earlier export of a clip may be deleted once the new copy exists, or None to leave it alone
         (the user said no to cleaning up). The returned folder is the limit for tidying up empty folders."""
-        if not old or self.cleanup_answer is not True:
+        if not old or not self._delete_old.get(clip_id):
             return None
+        return self.folder_limit(old, settings)
+
+    def folder_limit(self, old: str, settings: ExportSettings) -> Optional[str]:
+        """The folder an exported file lives in, as far as tidying up empty folders may go."""
         try:
             p = Path(old).resolve()
             for root in (Path(settings.output_dir).resolve(), *self._cleanup_roots):
@@ -506,7 +521,20 @@ class ExportManager(QObject):
         self._transient[clip_id] = ("exporting", "Exporting…")
         self.state_changed.emit(clip_id)
 
+    def delete_file_of(self, clip: Clip) -> bool:
+        """Deletes the clip's exported file (and folders that become empty). True if there was one."""
+        s = self.settings()
+        if not clip.export_path or not Path(clip.export_path).exists() or s is None:
+            return False
+        root = self.folder_limit(clip.export_path, s)
+        if root is None:
+            return False
+        remove_exported(Path(clip.export_path), Path(root))
+        clip.export_sig = clip.export_path = None
+        return True
+
     def _on_finished(self, clip_id: int, ok: bool, info: str):
+        self._delete_old.pop(clip_id, None)
         clip = next((c for c in self.project.clips if c.id == clip_id), None)
         if ok:
             self._transient.pop(clip_id, None)

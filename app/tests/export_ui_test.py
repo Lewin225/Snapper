@@ -272,11 +272,11 @@ win.project.auto_export = True
 win.project.remove(dup)
 print("ok   right-click: Duplicate (copy opens for editing, exports by itself), Delete, Open containing folder, Open in system app (disabled until exported)")
 
-# --- changing the export folder, name template or tag folders: ask once per session whether to clean up the old files
+# --- changing the export folder, name template or tag folders asks, every time, whether to clean up the old files
 def run_folder_change(new_dir, change=None):
     cur = win.project.export_settings
     new = {**cur, "output_dir": str(new_dir), **(change or {})}
-    win._confirm_moves(win.project.clips, ExportSettings.from_json(new), cur["output_dir"])
+    win._confirm_moves(win.project.clips, ExportSettings.from_json(new), cur["output_dir"], fresh=True)
     win.project.set_export_settings(new)
     win._auto_timer.start()
     assert waitfor(lambda: all(label(c) == "✓ Exported" and str(new_dir) in c.export_path for c in win.project.clips)), \
@@ -287,51 +287,71 @@ out_b, out_c, out_d, out_e = (mk() / n for n in ("exports_b", "exports_c", "expo
 for d in (out_b, out_c, out_d, out_e):
     d.mkdir()
 
-# session 1: the answer is No -> asked once, nothing is ever deleted
-reply["v"] = False
-asked.clear(); ExportManager.cleanup_answer = None
+reply["v"] = False                      # No: nothing is deleted
+asked.clear()
 run_folder_change(out_b)
-assert len(asked) == 1 and asked[0] == (n_clips, (str(out), str(out_b))), asked
+assert asked == [(n_clips, (str(out), str(out_b)))], asked
 assert len(files(out)) >= n_clips and len(files(out_b)) == n_clips, "declined: old files stay, new ones written"
-run_folder_change(out_c)          # a second change: not asked again, and the remembered No still applies
-assert len(asked) == 1, "asked only once per session"
+run_folder_change(out_c)                # asked again: no memory between changes
+assert len(asked) == 2 and asked[1] == (n_clips, (str(out_b), str(out_c))), asked
 assert len(files(out_b)) == n_clips and len(files(out_c)) == n_clips
 
-# session 2: the answer is Yes -> old files go once their replacements exist; foreign files and the folder stay
-reply["v"] = True
-asked.clear(); ExportManager.cleanup_answer = None
+reply["v"] = True                       # Yes: old files go once their replacements exist; foreign files and the folder stay
+asked.clear()
 (out_c / "mine.txt").write_text("not ours")
 run_folder_change(out_d)
-assert len(asked) == 1 and asked[0] == (n_clips, (str(out_c), str(out_d))), asked
+assert asked == [(n_clips, (str(out_c), str(out_d)))], asked
 assert waitfor(lambda: [f.name for f in files(out_c)] == ["mine.txt"]), files(out_c)
 assert len(files(out_d)) == n_clips
 assert not [d for d in out_c.rglob("*") if d.is_dir()], "folders left empty are removed"
 assert out_c.exists(), "the old export folder itself is never removed"
 (out_d / "mine.txt").write_text("not ours")
-run_folder_change(out_e)          # remembered Yes for the rest of the session: no new question
-assert len(asked) == 1
+run_folder_change(out_e)
+assert len(asked) == 2, "asked again for the next change"
 assert waitfor(lambda: [f.name for f in files(out_d)] == ["mine.txt"]), files(out_d)
 assert all(Path(c.export_path).exists() and str(out_e) in c.export_path for c in win.project.clips)
-# the same question for a name or tag-folder change inside the same folder, and for editing a clip
+
+# the same question for a name change inside the same folder, and for editing a clip
 reply["v"] = False
-asked.clear(); ExportManager.cleanup_answer = None
+asked.clear()
 (out_e / "mine.txt").unlink(missing_ok=True)
-before = sorted(f.name for f in files(out_e))
 cur = win.project.export_settings
-win._confirm_moves(win.project.clips, ExportSettings.from_json({**cur, "name_template": "{n}_{character}"}), cur["output_dir"])
+win._confirm_moves(win.project.clips, ExportSettings.from_json({**cur, "name_template": "{n}_{character}"}), cur["output_dir"], fresh=True)
 assert asked == [(n_clips, None)], asked
 win.project.set_export_settings({**cur, "name_template": "{n}_{character}"}); win._auto_timer.start()
 assert waitfor(lambda: all(label(c) == "✓ Exported" and Path(c.export_path).name[:3] == "%03d" % c.id for c in win.project.clips)), \
     [(label(c), c.export_path) for c in win.project.clips]
+assert len(asked) == 1, "the export that follows does not ask again about the same clips"
 assert len(files(out_e)) == 2 * n_clips, "answered No: the old names stay next to the new ones"
 reply["v"] = True
-asked.clear(); ExportManager.cleanup_answer = None
+asked.clear()
 edited = win.project.clips[0]
 edited.tags["character"] = "Moved"; win.project.touch(edited)     # a tag edit moves its file to another folder
 assert waitfor(lambda: len(asked) == 1 and label(edited) == "✓ Exported" and "Moved" in edited.export_path), (asked, label(edited))
 assert asked[0] == (1, None)
-print("ok   a name or tag-folder change, or a tag edit, asks the same question (once per session)")
-print("ok   changing the export folder: asked once per session; No keeps old files; Yes deletes each after its new copy is written, only Snapper's files, empty folders tidied")
+edited.tags["character"] = "Moved again"; win.project.touch(edited)
+assert waitfor(lambda: len(asked) == 2 and label(edited) == "✓ Exported" and "Moved again" in edited.export_path), asked
+print("ok   a folder, name or tag-folder change, or a tag edit, asks every time; the export that follows reuses the answer")
+
+# --- deleting a clip that has an exported file asks what to do with the file
+choice = {"v": "cancel"}
+prompts = []
+win._confirm_delete = lambda clip: (prompts.append(clip.id), choice["v"])[1]
+victim, victim2 = add(760.0, 761.0, "Doomed one", character="Husk"), add(770.0, 771.0, "Doomed two", character="Husk")
+assert waitfor(lambda: label(victim) == "✓ Exported" and label(victim2) == "✓ Exported")
+kept = Path(victim.export_path)
+n = len(win.project.clips)
+right_click(victim, "Delete")
+assert victim in win.project.clips and kept.exists() and prompts == [victim.id], "Cancel changes nothing"
+choice["v"] = "clip"
+right_click(victim, "Delete")
+assert victim not in win.project.clips and kept.exists(), "Delete clip only: the exported file stays"
+gone = Path(victim2.export_path)
+choice["v"] = "both"
+win.clips.delete.click() if False else win.delete_clip(victim2)
+assert victim2 not in win.project.clips and not gone.exists() and len(win.project.clips) == n - 2, "both: clip and file removed"
+assert len(prompts) == 3
+print("ok   deleting a clip with an exported file asks: clip and file / clip only / cancel (each time)")
 
 # --- the states survive closing and reopening; a deleted file shows as not exported
 win.project.save()

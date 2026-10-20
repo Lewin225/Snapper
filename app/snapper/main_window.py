@@ -628,7 +628,24 @@ class MainWindow(QMainWindow):
         copy = self.project.add(Clip(clip.start, clip.end, clip.text, clip.text_auto, dict(clip.tags)))
         self.edit(copy)
 
+    def _confirm_delete(self, clip: Clip) -> str:
+        """For a clip that has an exported file: 'both' (clip and file), 'clip' (keep the file) or 'cancel'."""
+        box = QMessageBox(QMessageBox.Question, "Delete clip",
+                          "Delete this clip?\n\nIt has been exported as:\n" + str(clip.export_path), parent=self)
+        both = box.addButton("Delete clip and exported file", QMessageBox.DestructiveRole)
+        only = box.addButton("Delete clip only", QMessageBox.AcceptRole)
+        box.addButton(QMessageBox.Cancel)
+        box.setDefaultButton(QMessageBox.Cancel)
+        box.exec()
+        return "both" if box.clickedButton() is both else "clip" if box.clickedButton() is only else "cancel"
+
     def delete_clip(self, clip: Clip):
+        if clip.export_path and Path(clip.export_path).exists():
+            choice = self._confirm_delete(clip)
+            if choice == "cancel":
+                return
+            if choice == "both":
+                self.exporter.delete_file_of(clip)
         self.project.remove(clip)
         if self.editor.clip is clip:
             self.edit(self.pending)
@@ -704,23 +721,27 @@ class MainWindow(QMainWindow):
             new = dlg.settings()
             old = self._export_settings()
             if old is not None:
-                self._confirm_moves(self.project.clips, new, old.output_dir)
+                self._confirm_moves(self.project.clips, new, old.output_dir, fresh=True)
             self.project.set_export_settings(new.to_json())
             self.exporter.verify_files()
             if self.project.auto_export:
                 self._auto_timer.start()
 
-    def _confirm_moves(self, clips: list[Clip], settings: exporting.ExportSettings, old_dir: Optional[str] = None):
+    def _confirm_moves(self, clips: list[Clip], settings: exporting.ExportSettings, old_dir: Optional[str] = None,
+                       fresh: bool = False):
         """Before clips are exported to a new place (another folder, a new name or format): if their earlier files are
-        still there, asks whether those may be deleted once the new copies are written. Asked once per session; the
-        answer is kept in memory only and applies to every later change."""
-        moved = self.exporter.moved_files(clips, settings)
+        still there, asks whether those may be deleted once the new copies are written. Asked every time; the answer
+        is kept for those clips until they have been exported, so the export that follows does not ask again.
+        `fresh` (the settings were just changed) discards earlier answers first."""
+        if fresh:
+            self.exporter.forget_decisions()
+        moved = self.exporter.undecided(self.exporter.moved_files(clips, settings))
         if not moved:
             return
-        if exporting.ExportManager.cleanup_answer is None:
-            folder = (old_dir, settings.output_dir) if old_dir and old_dir != settings.output_dir else None
-            exporting.ExportManager.cleanup_answer = self._confirm_cleanup(len(moved), folder)
-        if exporting.ExportManager.cleanup_answer and old_dir:
+        folder = (old_dir, settings.output_dir) if old_dir and old_dir != settings.output_dir else None
+        delete = self._confirm_cleanup(len(moved), folder)
+        self.exporter.decide_old_file([c.id for c in moved], delete)
+        if delete and old_dir:
             self.exporter.allow_cleanup(old_dir)
 
     def _confirm_cleanup(self, count: int, folders: Optional[tuple[str, str]]) -> bool:
@@ -733,8 +754,7 @@ class MainWindow(QMainWindow):
                     f"export settings, tags or text.\n\nDelete the old {what} once the new {'copies are' if count != 1 else 'copy is'} written?")
         box = QMessageBox(QMessageBox.Question, "Exported files are moving", text, QMessageBox.Yes | QMessageBox.No, self)
         box.setInformativeText("Each old file is deleted only after its new copy has been written, and only files "
-                               "Snapper exported are touched (plus folders left empty by that). Your answer is "
-                               "remembered until Snapper is closed, so you are not asked again.")
+                               "Snapper exported are touched (plus folders left empty by that).")
         box.setDefaultButton(QMessageBox.No)
         return box.exec() == QMessageBox.Yes
 
