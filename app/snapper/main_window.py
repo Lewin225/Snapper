@@ -259,7 +259,7 @@ class MainWindow(QMainWindow):
     def _build_menu(self):
         m = self.menuBar()
         f = m.addMenu("&File")
-        self._action(f, "&Open video…", self.open_dialog, QKeySequence.Open)
+        self._action(f, "&New Project (Open Video)…", self.open_dialog, QKeySequence.Open)
         self._action(f, "Open &project…", self.open_project_dialog)
         self.menu_recent = f.addMenu("Open &recent")
         self.menu_recent.aboutToShow.connect(self._fill_recent_menu)
@@ -936,7 +936,7 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ misc
     def open_dialog(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Open video", str(self.media_path.parent), launcher.VIDEO_FILTER)
+        path, _ = QFileDialog.getOpenFileName(self, "New project: choose a video", str(self.media_path.parent), launcher.VIDEO_FILTER)
         if path:
             self._open(Path(path))
 

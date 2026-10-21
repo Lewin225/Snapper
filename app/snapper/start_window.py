@@ -21,7 +21,7 @@ class StartWindow(QWidget):
         title.setStyleSheet("font-size: 22pt; font-weight: bold;")
         sub = QLabel("Cut, tag and export dialogue from an episode.")
         sub.setStyleSheet("color: gray;")
-        self.btn_video = QPushButton("Open video…")
+        self.btn_video = QPushButton("New Project (Open Video)…")
         self.btn_project = QPushButton("Open project…")
         self.btn_video.setDefault(True)
         self.btn_video.clicked.connect(self.open_video_dialog)
@@ -70,7 +70,7 @@ class StartWindow(QWidget):
         self._open(Path(item.data(Qt.UserRole)))
 
     def open_video_dialog(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Open video", str(Path.home()), launcher.VIDEO_FILTER)
+        path, _ = QFileDialog.getOpenFileName(self, "New project: choose a video", str(Path.home()), launcher.VIDEO_FILTER)
         if path:
             self._open(Path(path))
 
