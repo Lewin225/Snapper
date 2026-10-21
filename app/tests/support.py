@@ -6,7 +6,7 @@ from pathlib import Path
 from PySide6.QtTest import QTest
 
 MEDIA = Path(__file__).parent / "media"
-VIDEO = MEDIA / "overgrown.mp4"          # the default test video (CC BY 4.0), with a WhisperX subtitle track embedded
+VIDEO = MEDIA / "tears_of_steel.mp4"      # the default test video (CC BY 3.0), fetched by fetch_media.sh, with WhisperX subtitles embedded
 TWO_AUDIO = MEDIA / "two_audio.mkv"      # a short file with two audio tracks (noise, then a 440 Hz tone)
 
 

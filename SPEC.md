@@ -217,7 +217,7 @@ The app follows the system theme. With a real platform theme (the KDE Flatpak ru
 - If Yes: each old file is deleted only after its replacement has been written, and only files Snapper itself exported (the path stored with the clip) are touched; folders left empty inside the old folder are removed, the old folder itself and any other files stay. If No: the old files are never deleted.
 
 ### Test video and tests
-- The default test video is `app/tests/media/overgrown.mp4` (OVERGROWN – Blender Feature Film (Teaser), CC BY 4.0) with a WhisperX-generated subtitle track embedded, plus `two_audio.mkv` for the audio-track tests (see `app/tests/media/README.md`). `app/run.sh` opens it by default. The old test episode and all earlier bake-off data/caches/projects were cleared.
+- The default test video is *Tears of Steel* (Blender Foundation, CC BY 3.0, 12 min, lots of dialogue), downloaded on demand by `app/tests/fetch_media.sh` (checked against a SHA-256, not stored in git) with a WhisperX subtitle track (`tears_of_steel.srt`, 80 lines) embedded. The earlier OVERGROWN teaser was dropped: its licence is not stated. `two_audio.mkv` is a synthetic two-track file.
 - `app/tests/run_all.sh` runs every test against it (no arguments needed; a `.mp4`/`.mkv` or `.png` argument is recognised by its extension). Tests that use clip times use the first 80 seconds of the video.
 
 ### Flatpak

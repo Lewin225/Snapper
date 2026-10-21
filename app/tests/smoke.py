@@ -154,13 +154,14 @@ assert len(tr.lines) >= 8 and nwords >= 20, (len(tr.lines), nwords)
 print(f"ok   WhisperX transcript: {len(tr.lines)} lines, {nwords} words")
 starts = [l["start"] for l in tr.lines]
 assert starts == sorted(starts)
-dups = sum(1 for a, b in zip(tr.lines, tr.lines[1:]) if a["text"] == b["text"] and abs(a["start"] - b["start"]) < 1)
+# a seam duplicate re-transcribes the same line, so it overlaps its twin (two quick "No!"s one after the other do not)
+dups = sum(1 for a, b in zip(tr.lines, tr.lines[1:]) if a["text"] == b["text"] and b["start"] < a["end"])
 assert dups == 0, f"{dups} duplicated lines at window seams"
 print("ok   no duplicate lines at window seams")
 
 win.edit(win.pending)
-win.set_range(27.4, 29.8)   # "I've had smaller." is spoken here
-print("     word-based text for 27.4-29.8:", repr(win.editor.clip.text))
+win.set_range(27.4, 30.1)   # "You have your robotics, and I just want to be awesome in space." is spoken here
+print("     word-based text for 27.4-30.1:", repr(win.editor.clip.text))
 assert win.editor.clip.text, "text from words"
 assert win.editor.wave.word_source(26.0, 31.0), "words reach the waveform"
 QTest.qWait(500)

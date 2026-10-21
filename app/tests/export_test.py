@@ -87,7 +87,8 @@ assert wf.exists(), "needs the warm cache (run the app once on this episode)"
 wave_pcm = media.open_pcm(wf, 1, 16)
 p2 = Project(episode)
 p2.clips.clear()
-for a, b in ((40.0, 42.417), (0.0, 1.5), (53.4567, 55.0), (80.0, 81.0), (80.5, 120.0)):
+dur = len(wave_pcm) / 44100
+for a, b in ((40.0, 42.417), (0.0, 1.5), (53.4567, 55.0), (dur - 1.0, dur), (dur - 0.5, dur + 40.0)):   # the last runs past the end
     p2.add(Clip(a, b, f"clip {a}", True, {"character": "A"}))
 settings = ExportSettings(name_template="c{n}", text_field="title", embed_tags=True)
 out = mk()
