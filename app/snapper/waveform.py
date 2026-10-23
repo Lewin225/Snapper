@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import Optional
 
 import numpy as np
-from PySide6.QtCore import QEvent, QLineF, QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QEvent, QLineF, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPalette, QPen, QPixmap
 from PySide6.QtWidgets import QWidget
 
@@ -14,11 +14,14 @@ from .media import RATE
 
 WORD_BAND = 18  # px at the top reserved for word labels
 SNAP_PX = 8
+DRAG_PX = 4            # a press that moves less than this is a click
+SELECT_HOLD_MS = 250   # hold the right button this long before dragging selects a clip (a quick slip never clears a clip)
 
 
 class WaveformWidget(QWidget):
     selection_edited = Signal(object, object)  # (in, out) after the user dragged a handle or clicked a word
     seek_requested = Signal(float)
+    scrub_requested = Signal(float)   # the playhead is being dragged: show this moment (latest wins), the exact seek follows
 
     def __init__(self):
         super().__init__()
@@ -35,6 +38,10 @@ class WaveformWidget(QWidget):
         self.word_source = lambda a, b: []  # (start, end) -> words overlapping that span
         self.snap = True
         self._drag: Optional[str] = None
+        self.view_offset = 0.0              # seconds the view is panned away from the selection (left-drag with a clip selected)
+        self._pan: Optional[dict] = None    # a left press that may turn into a drag
+        self._rsel: Optional[dict] = None   # a right press: waiting for the hold, then selecting
+        self._hold = QTimer(self, singleShot=True, interval=SELECT_HOLD_MS, timeout=self._hold_elapsed)
         self._frozen: Optional[tuple[float, float]] = None
         self._key = None
         self._pm: Optional[QPixmap] = None
@@ -61,8 +68,16 @@ class WaveformWidget(QWidget):
             self.update()
 
     def set_selection(self, a: Optional[float], b: Optional[float]):
+        if a is None or self.sel_in is None or b is None or self.sel_out is None or b < self.sel_in or a > self.sel_out:
+            self.view_offset = 0.0   # no clip, a new one, or a different one: the view goes back to it
         self.sel_in, self.sel_out = a, b
         self.update()
+
+    def set_playhead(self, t: float):
+        """The playback position. While the playhead is being dragged the drag decides where it is."""
+        if self._pan and self._pan["moved"] and self._pan["follow"]:
+            return
+        self.playhead = t
 
     # --- geometry
     def view(self) -> tuple[float, float]:
@@ -73,7 +88,9 @@ class WaveformWidget(QWidget):
         else:
             a, b = self.sel_in - self.margin, (self.sel_out if self.sel_out is not None else self.sel_in) + self.margin
         a = max(0.0, a)
-        return a, min(self.dur, max(b, a + 0.5))
+        b = min(self.dur, max(b, a + 0.5))
+        off = max(-a, min(self.dur - b, self.view_offset))   # panned, but never past either end of the episode
+        return a + off, b + off
 
     def _x(self, t, a, b):
         return (t - a) / (b - a) * self.width()
@@ -198,6 +215,12 @@ class WaveformWidget(QWidget):
         a, b = self.view()
         x, y = e.position().x(), e.position().y()
         self._drag = None
+        if e.button() == Qt.RightButton:   # hold, then drag: select a clip
+            self._rsel = {"x0": x, "t0": self._t(x, a, b), "view": (a, b), "state": "wait"}
+            self._hold.start()
+            return
+        if e.button() != Qt.LeftButton:
+            return
         for name, t in (("out", self.sel_out), ("in", self.sel_in)):
             if t is not None and abs(self._x(t, a, b) - x) < SNAP_PX:
                 self._drag, self._frozen = name, (a, b)
@@ -208,13 +231,53 @@ class WaveformWidget(QWidget):
                 if wd["start"] <= t <= wd["end"]:
                     self.selection_edited.emit(wd["start"], wd["end"])
                     return
-        self.seek_requested.emit(self._t(x, a, b))
+        # a click moves the playhead; a drag pans: it scrubs while no clip is selected (the view follows the playhead) and
+        # offsets the view while one is
+        self._pan = {"x0": x, "t0": self._t(x, a, b), "playhead0": self.playhead, "off0": self.view_offset,
+                     "spp": (b - a) / max(self.width(), 1), "moved": False, "follow": self.sel_in is None}
+
+    def _hold_elapsed(self):
+        if self._rsel and self._rsel["state"] == "wait":
+            self._rsel["state"] = "armed"
+            self.setCursor(Qt.CrossCursor)
 
     def mouseMoveEvent(self, e):
+        x = e.position().x()
+        if self._rsel:
+            r = self._rsel
+            if abs(x - r["x0"]) >= DRAG_PX:
+                if r["state"] == "wait":
+                    r["state"] = "cancelled"   # moved before the hold was up: not a selection
+                    self._hold.stop()
+                elif r["state"] == "armed":
+                    r["state"] = "select"
+                    self._frozen = r["view"]
+                if r["state"] == "select":
+                    a, b = self._frozen
+                    t = self._snap(min(max(self._t(x, a, b), 0.0), self.dur), a, b)
+                    t0 = self._snap(r["t0"], a, b)
+                    self.selection_edited.emit(min(t0, t), max(t0, t))
+                    self.update()
+            return
+        if self._pan:
+            p = self._pan
+            dx = x - p["x0"]
+            if not p["moved"]:
+                if abs(dx) < DRAG_PX:
+                    return
+                p["moved"] = True
+                self.setCursor(Qt.ClosedHandCursor)
+            if p["follow"]:
+                self.playhead = min(max(p["playhead0"] - dx * p["spp"], 0.0), self.dur)
+                self.scrub_requested.emit(self.playhead)
+            else:
+                self.view_offset = p["off0"] - dx * p["spp"]
+            self.update()
+            return
         if not self._drag:
             return
         a, b = self.view()
-        t = self._snap(min(max(self._t(e.position().x(), a, b), 0.0), self.dur), a, b)
+        t = self._snap(min(max(self._t(x, a, b), 0.0), self.dur), a, b)
         if self._drag == "in":
             self.sel_in = min(t, self.sel_out) if self.sel_out is not None else t
         else:
@@ -222,7 +285,17 @@ class WaveformWidget(QWidget):
         self.selection_edited.emit(self.sel_in, self.sel_out)
         self.update()
 
-    def mouseReleaseEvent(self, _):
+    def mouseReleaseEvent(self, e):
+        if self._rsel and e.button() == Qt.RightButton:
+            self._hold.stop()
+            self._rsel = None
+        elif self._pan and e.button() == Qt.LeftButton:
+            p, self._pan = self._pan, None
+            if not p["moved"]:
+                self.seek_requested.emit(p["t0"])   # a click
+            elif p["follow"]:
+                self.seek_requested.emit(self.playhead)   # the exact moment where the drag ended
+        self.unsetCursor()
         self._drag = self._frozen = None
         self.update()
 

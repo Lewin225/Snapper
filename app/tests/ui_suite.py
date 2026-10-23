@@ -17,7 +17,7 @@ os.environ.setdefault("SNAPPER_DATA", tempfile.mkdtemp())   # tests never touch 
 
 import support
 
-TESTS = ["editor_test", "typing_test", "layout_test", "play_clip_test"]
+TESTS = ["editor_test", "typing_test", "layout_test", "play_clip_test", "waveform_drag_test"]
 
 app = support.application()
 win = support.window()

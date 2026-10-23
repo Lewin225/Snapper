@@ -189,6 +189,7 @@ class MainWindow(QMainWindow):
         self.audio_combo.currentIndexChanged.connect(self.set_audio_track)
         self.editor.wave.word_source = lambda a, b: self.transcript().words_between(a, b)
         self.editor.wave.seek_requested.connect(lambda t: self.player.seek(t))
+        self.editor.wave.scrub_requested.connect(self.player.scrub)
         self.editor.wave.selection_edited.connect(self.on_wave_edited)
         self.editor.range_edited.connect(self.on_wave_edited)
         self.editor.preview_requested.connect(self.player.scrub)
@@ -1308,7 +1309,7 @@ class MainWindow(QMainWindow):
             self._glide.start()
         elif not want:
             self._glide.stop()
-            self.editor.wave.playhead = self.player.pos
+            self.editor.wave.set_playhead(self.player.pos)
             self.editor.wave.update()
 
     def _glide_tick(self):
@@ -1317,7 +1318,7 @@ class MainWindow(QMainWindow):
             self._shown = t               # a jump (seek): follow it at once
         else:
             self._shown = max(self._shown, t)   # never step backwards when a report arrives a little late
-        self.editor.wave.playhead = self._shown
+        self.editor.wave.set_playhead(self._shown)
         self.editor.wave.update()
 
     def on_position(self, t: float):
@@ -1325,7 +1326,7 @@ class MainWindow(QMainWindow):
             self._update_playing_source()
         self._pos_t, self._pos_wall, self._shown = t, time.monotonic(), (t if self.player.paused else self._shown)
         if not (self._smooth and self._glide.isActive()):
-            self.editor.wave.playhead = t
+            self.editor.wave.set_playhead(t)
             self.editor.wave.update()
         if not self.slider.isSliderDown():
             self.slider.setValue(int(t / self.duration() * 100000))
