@@ -1,4 +1,5 @@
 #!/bin/bash
+# (editor, typing, layout and play-clip tests share one window: ui_suite.py)
 # Runs every test against the default test video (tests/media/tears_of_steel.mp4, fetched on first use). Run in an environment with the app's
 # Python, mpv and ffmpeg; the smoke test goes first because it warms the cache the others read. usage: tests/run_all.sh
 cd "$(dirname "$(readlink -f "$0")")/.." || exit 1
@@ -11,7 +12,7 @@ failed=0
 export TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 "$(dirname "$0")/fetch_media.sh" || { echo "could not get the test video; stopping" >&2; exit 1; }
-for t in smoke editor_test typing_test layout_test play_clip_test progress_test project_test tag_kinds_test theme_test \
+for t in smoke ui_suite progress_test project_test tag_kinds_test theme_test \
          prune_test launcher_test system_check_test engine_test isolation_test transcript_ui_test export_test export_ui_test; do
     echo "=== $t"
     if [ "$t" = isolation_test ] && [ ! -x "${SNAPPER_SEP_PYTHON:-$HOME/envs/sep/bin/python}" ]; then

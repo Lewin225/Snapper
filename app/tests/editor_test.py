@@ -19,15 +19,12 @@ from snapper.theme import apply_system_theme
 from snapper.main_window import MainWindow
 from snapper.scrubber import parse_time
 
-app = QApplication(sys.argv)
-locale.setlocale(locale.LC_NUMERIC, "C")
-apply_system_theme(app)
+import support
 from support import episode_arg, shot_arg
+app = support.application()
 episode = episode_arg()
 episode.with_name(episode.name + ".snapper.json").unlink(missing_ok=True)
-win = MainWindow(episode)
-win.show()
-QTest.qWait(4000)
+win = support.window(episode, settle_ms=4000)
 ed = win.editor
 
 
@@ -146,4 +143,4 @@ if any(a.endswith('.png') for a in sys.argv[1:]):
 win.project.save()
 episode.with_name(episode.name + ".snapper.json").unlink(missing_ok=True)
 print("EDITOR OK")
-win.close()
+support.finish(win)

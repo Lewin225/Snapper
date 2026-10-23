@@ -20,12 +20,9 @@ from snapper.theme import apply_system_theme
 from snapper.main_window import MainWindow
 from support import wait_until_ready
 
-app = QApplication(sys.argv)
-locale.setlocale(locale.LC_NUMERIC, "C")
-apply_system_theme(app)
-win = MainWindow(__import__('support').episode_arg())
-win.show()
-wait_until_ready(win)
+import support
+app = support.application()
+win = support.window()
 btn = {b.text(): b for b in win.findChildren(QPushButton)}
 
 win.set_range(40.0, 42.4)
@@ -69,4 +66,4 @@ assert win.act_motion["smooth"].isChecked() and QSettings("snapper", "snapper").
 print(f"ok   playhead motion: {accurate} distinct positions in 1.5 s while Accurate, {smooth} while Smooth")
 assert smooth > accurate * 2, (accurate, smooth)   # video 24-30 fps; the screen is 60 Hz or more
 print("PLAY CLIP OK")
-win.close()
+support.finish(win)

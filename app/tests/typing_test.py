@@ -14,9 +14,9 @@ from snapper.theme import apply_system_theme
 from snapper.main_window import MainWindow
 from support import episode_arg
 ep = episode_arg()
-app = QApplication(sys.argv); locale.setlocale(locale.LC_NUMERIC, "C"); apply_system_theme(app)
-win = MainWindow(ep); win.show(); win.activateWindow()
-QTest.qWait(4000)
+import support
+app = support.application()
+win = support.window(ep, settle_ms=4000); win.activateWindow()
 calls = []
 for name in ("set_in", "set_out", "commit", "deselect_clip", "play_selection"):
     orig = getattr(win, name)
@@ -52,4 +52,4 @@ calls.clear(); QTest.keyClick(win, Qt.Key_I); QTest.qWait(100)
 print("I after leaving field fires:", calls, flush=True)
 assert calls == ["set_in"]
 print("TYPING OK")
-win.close()
+support.finish(win)

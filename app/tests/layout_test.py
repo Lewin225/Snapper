@@ -17,13 +17,11 @@ from PySide6.QtWidgets import QApplication
 from snapper.theme import apply_system_theme
 from snapper.main_window import MainWindow
 
-app = QApplication(sys.argv)
-locale.setlocale(locale.LC_NUMERIC, "C")
-apply_system_theme(app)
-win = MainWindow(__import__('support').episode_arg())
-win.show()
+import support
+app = support.application()
+win = support.window(settle_ms=1500)
 win.move(900, 40)  # leave room on the left: a real drag cannot go past the screen edge
-QTest.qWait(1500)
+QTest.qWait(300)
 win.reset_layout()
 QTest.qWait(300)
 
@@ -69,4 +67,4 @@ QTest.qWait(200)
 assert win.root.sizes()[1] > 200
 win.reset_layout()
 print("LAYOUT OK")
-win.close()
+support.finish(win)
