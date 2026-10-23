@@ -1,4 +1,6 @@
-"""Fine-adjust waveform: shows the selection plus a margin, with draggable in/out handles."""
+"""Fine-adjust waveform: shows the selection plus a margin, with draggable in/out handles. It has no background of its
+own (the window shows through). The original audio is always drawn; the isolated audio, once there (or as far as it
+has got while it is still being made), is drawn over it in a second colour on the same scale."""
 from __future__ import annotations
 
 from typing import Optional
@@ -21,6 +23,10 @@ class WaveformWidget(QWidget):
     def __init__(self):
         super().__init__()
         self.samples: Optional[np.ndarray] = None
+        self.iso_samples: Optional[np.ndarray] = None   # the isolated audio, same rate and timeline as `samples`
+        self.iso_upto: Optional[float] = None           # how far (seconds) it is usable while still being made; None = all of it
+        self.show_iso = False                           # draw it over the original
+        self._iso_version = 0
         self.dur = 0.0
         self.sel_in: Optional[float] = None
         self.sel_out: Optional[float] = None
@@ -41,6 +47,18 @@ class WaveformWidget(QWidget):
         self.dur = len(samples) / RATE if samples is not None else 0.0
         self._key = None
         self.update()
+
+    def set_isolated(self, samples: Optional[np.ndarray], upto: Optional[float] = None):
+        """The isolated audio to overlay. While it is still being made `samples` is filled in progressively and `upto` says
+        how many seconds of it are done."""
+        self.iso_samples, self.iso_upto = samples, upto
+        self._iso_version += 1
+        self.update()
+
+    def set_show_isolated(self, on: bool):
+        if on != self.show_iso:
+            self.show_iso = on
+            self.update()
 
     def set_selection(self, a: Optional[float], b: Optional[float]):
         self.sel_in, self.sel_out = a, b
@@ -75,36 +93,65 @@ class WaveformWidget(QWidget):
             self.update()
         super().changeEvent(e)
 
+    def iso_color(self) -> QColor:
+        c = self.palette().color(QPalette.Link)
+        hi = self.palette().color(QPalette.Highlight)
+        if abs(c.hue() - hi.hue()) < 25 and abs(c.lightness() - hi.lightness()) < 60:   # must stand out from the original's colour
+            c = QColor(255, 150, 0)
+        return c
+
+    def _lines(self, seg: np.ndarray, w: int, h: int, color: QColor, gain: float, total: int):
+        """Peak lines (min..max per pixel column) for `seg`, which is the first part of a view `total` samples long."""
+        n = min(int(w * len(seg) / total), len(seg))   # a partly finished overlay covers only part of the width
+        if n < 1:
+            return None, gain
+        edges = np.linspace(0, len(seg), n + 1).astype(int)
+        mn, mx = np.minimum.reduceat(seg, edges[:-1]), np.maximum.reduceat(seg, edges[:-1])
+        if gain <= 0:   # the original sets the scale; the isolated audio shares it, so what was removed shows
+            gain = 0.95 / max(float(np.percentile(np.maximum(-mn, mx), 99.5)), 0.02)   # auto-gain
+        mid, half = (h + WORD_BAND) / 2, (h - WORD_BAND) / 2
+        xs = np.arange(n) * (w * len(seg) / total) / n
+        y0 = mid - np.clip(mx * gain, -1, 1) * half
+        y1 = mid - np.clip(mn * gain, -1, 1) * half
+        return [QLineF(x, ya, x, yb) for x, ya, yb in zip(xs, y0, y1)], gain
+
     def _render_peaks(self, a, b, w, h):
         pm = QPixmap(w, h)
-        pm.fill(self.palette().color(QPalette.Base))
+        pm.fill(Qt.transparent)
         seg = np.asarray(self.samples[int(a * RATE):int(b * RATE)], dtype=np.float32) / 32768.0
-        if len(seg) and w:
-            n = min(w, len(seg))
-            edges = np.linspace(0, len(seg), n + 1).astype(int)
-            mn, mx = np.minimum.reduceat(seg, edges[:-1]), np.maximum.reduceat(seg, edges[:-1])
-            self.gain = 0.95 / max(float(np.percentile(np.maximum(-mn, mx), 99.5)), 0.02)  # auto-gain
-            mid = (h + WORD_BAND) / 2
-            half = (h - WORD_BAND) / 2
-            xs = np.arange(n) * w / n
-            y0 = mid - np.clip(mx * self.gain, -1, 1) * half
-            y1 = mid - np.clip(mn * self.gain, -1, 1) * half
-            p = QPainter(pm)
-            p.setPen(QPen(self.palette().color(QPalette.Highlight), 1))
-            p.drawLines([QLineF(x, ya, x, yb) for x, ya, yb in zip(xs, y0, y1)])
-            p.end()
+        if not (len(seg) and w):
+            return pm
+        iso = None
+        if self.show_iso and self.iso_samples is not None:
+            hi = int(b * RATE) if self.iso_upto is None else min(int(b * RATE), int(self.iso_upto * RATE))
+            lo = int(a * RATE)
+            if hi > lo:   # the part of this view that is isolated so far
+                iso = np.asarray(self.iso_samples[lo:hi], dtype=np.float32) / 32768.0
+        p = QPainter(pm)
+        base = QColor(self.palette().color(QPalette.Highlight))
+        if iso is not None:
+            base.setAlpha(110)   # the original steps back so the isolated audio stands out
+        lines, self.gain = self._lines(seg, w, h, base, 0.0, len(seg))
+        if lines:
+            p.setPen(QPen(base, 1))
+            p.drawLines(lines)
+        if iso is not None:
+            lines, _ = self._lines(iso, w, h, self.iso_color(), self.gain, len(seg))
+            if lines:
+                p.setPen(QPen(self.iso_color(), 1))
+                p.drawLines(lines)
+        p.end()
         return pm
 
     def paintEvent(self, _):
         p = QPainter(self)
         w, h = self.width(), self.height()
         if self.samples is None:
-            p.fillRect(self.rect(), self.palette().color(QPalette.Base))
             p.setPen(self._dim())
             p.drawText(self.rect(), Qt.AlignCenter, "Decoding audio…")
             return
         a, b = self.view()
-        key = (round(a, 4), round(b, 4), w, h)
+        key = (round(a, 4), round(b, 4), w, h, self.show_iso, self._iso_version)
         if key != self._key:
             self._pm, self._key = self._render_peaks(a, b, w, h), key
         p.drawPixmap(0, 0, self._pm)

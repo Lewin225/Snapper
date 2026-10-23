@@ -4,7 +4,8 @@ The input is raw 16-bit little-endian stereo PCM at 44.1 kHz; the output is the 
 it), sample N being the same moment in both. The input is memory-mapped and each window is processed on its own, so memory stays flat however long the episode is. Neighbouring
 windows overlap and are crossfaded, which hides the seams a hard cut between chunks would leave.
 
-Prints `@@{json}` lines: {"stage": text}, {"progress": 0..1}, {"device": text}, finally {"done": true}.
+Prints `@@{json}` lines: {"stage": text}, {"progress": 0..1, "upto": seconds} (after each window: that much of the output file is
+finished and flushed, so it can be read while the job runs), {"device": text}, finally {"done": true}.
 
 usage: python isolate_worker.py IN.pcm OUT.wav --model NAME --model-dir DIR [--window 45] [--overlap 5] [--work DIR]
 """
@@ -86,6 +87,7 @@ def main():
         with open(tmp, "wb") as out:
             out.write(wav_header(total))
             tail = None
+            written = 0                                    # frames of the output that are final
             start = 0
             while start < total:
                 end = min(start + L, total)
@@ -94,14 +96,17 @@ def main():
                     k = min(len(tail), len(chunk))
                     ramp = np.linspace(0.0, 1.0, k, dtype=np.float32)[:, None]
                     out.write(to_pcm16(tail[:k] * (1.0 - ramp) + chunk[:k] * ramp))
+                    written += k
                     chunk = chunk[k:]
                 if end >= total:
                     out.write(to_pcm16(chunk))
                     break
                 out.write(to_pcm16(chunk[:-O]))
+                written += len(chunk) - O
                 tail = chunk[-O:]
                 start = end - O
-                say(progress=min(end / total, 0.999))
+                out.flush()
+                say(progress=min(end / total, 0.999), upto=written / RATE)
         os.replace(tmp, a.pcm_out)
         assert os.path.getsize(a.pcm_out) == 44 + total * 4, "the output is not the same length as the input"
     finally:

@@ -165,6 +165,8 @@ for eng, labels in ((WX, ["WhisperX", "PyTorch", "torchaudio"]), (SEP, ["audio-s
         assert engine.current(eng).ok and engine.current(eng).source == "chosen"
         engine.set_chosen_python(eng, None)
     dlg.close()
+    dlg.deleteLater()
+    app.processEvents()
 print("ok   dialog (both engines): lists what is missing; GPU/CPU choice changes the download note; 'use my own' only accepts a complete one")
 
 # --- the install failing because the distribution manages the Python: asks, and only on a yes installs with --break-system-packages
@@ -182,6 +184,9 @@ dlg._confirm_break_system = lambda: (asked.append(1), False)[1]
 dlg.installer = Fake()
 dlg._install_done(False, "managed")
 assert asked and not installs
+dlg.installer = None
+dlg.deleteLater()
+app.processEvents()
 print("ok   a managed system Python: the dialog asks before using --break-system-packages, and installs nothing on a no")
 
 # --- the buttons: no engine -> asks, and carries on without it if declined
@@ -198,8 +203,15 @@ if DEV_WX.exists():
     engine_dialog.ensure_engine = lambda eng, parent=None: engine.check(eng, DEV_WX, "developer")
     win.start_transcription()
     assert win.transcript_job is not None, "with a ready engine the job starts"
-    win.transcript_job.kill()
+    job = win.transcript_job
+    job.kill()
+    for _ in range(100):   # let the killed process be reaped before the window closes
+        if job._proc.state() == job._proc.ProcessState.NotRunning:
+            break
+        QTest.qWait(50)
     QTest.qWait(500)
 win.close()
+QTest.qWait(500)
 print("ok   'Generate using WhisperX': asks when the engine is missing, does nothing if declined, starts when ready")
+app.processEvents()
 print("ENGINE OK")

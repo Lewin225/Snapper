@@ -40,6 +40,7 @@ def models_dir() -> Path:
 class IsolationJob(QObject):
     """Runs the worker on one stereo PCM file; progress arrives as the windows complete."""
     progress = Signal(float)
+    partial = Signal(float)     # seconds of the output that are final: the start of the file can be read already
     stage = Signal(str)
     done = Signal(bool, str)
 
@@ -53,6 +54,7 @@ class IsolationJob(QObject):
         self._cancelled = False
         self.device = ""
         self._out = wav_out
+        self.tmp_path = Path(str(wav_out) + ".tmp")   # where the output grows until the job is complete
         self._proc = QProcess(self)
         self._proc.setProgram(str(python))
         self._proc.setArguments(["-u", str(ISOLATION_BACKEND_DIR / "isolate_worker.py"), str(pcm_in), str(wav_out),
@@ -93,6 +95,8 @@ class IsolationJob(QObject):
                 self.stage.emit(msg["stage"])
             if "progress" in msg:
                 self.progress.emit(msg["progress"])
+            if "upto" in msg:
+                self.partial.emit(msg["upto"])
 
     def _finished(self, code, _status):
         if self._cancelled:

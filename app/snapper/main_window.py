@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 from PySide6.QtCore import QEvent, QObject, QRegularExpression, QSettings, Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence, QRegularExpressionValidator
 from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
@@ -90,7 +91,8 @@ class MainWindow(QMainWindow):
         self._pcm_waiters: dict[Path, list] = {}   # decoded audio being prepared -> who is waiting for it
         self._on_proxy = False
         self.isolation_job: Optional[isolation.IsolationJob] = None
-        self._wave_isolated = False                  # whether the waveform shows the isolated audio
+        self._iso_live: Optional[np.ndarray] = None  # mono waveform of the isolated audio while it is being made
+        self._iso_live_done = 0                      # how many frames of it are filled in
 
         # --- widgets
         self.video = VideoWidget(self.player)
@@ -436,12 +438,11 @@ class MainWindow(QMainWindow):
             self._audio_job = None
             self._job_state.pop("audio", None)
             self._refresh_job_label()
-        iso = self._effective_source() == "isolated"
-        if media.audio_path(self.media_path, track, iso).exists():
+        if media.audio_path(self.media_path, track).exists():
             self._audio_ready(track)
         elif self.info.audio:
             self.editor.wave.set_audio(None)
-            job = media.audio_job(self.info, self.info.duration, track, isolated=iso)
+            job = media.audio_job(self.info, self.info.duration, track)
             self._audio_job = job
             self._run_job(job, "audio", lambda: self._audio_ready(track))
 
@@ -527,11 +528,24 @@ class MainWindow(QMainWindow):
 
     def _audio_ready(self, track: int):
         if track == self.project.audio_track:  # ignore a decode that finished after the track was changed
-            iso = self._effective_source() == "isolated"
-            path = media.audio_path(self.media_path, track, iso)
-            if path.exists():
-                self._wave_isolated = iso
-                self.editor.wave.set_audio(media.open_audio(path))
+            self.editor.wave.set_audio(media.open_audio(media.audio_path(self.media_path, track)))
+            self._load_isolated_wave()
+
+    def _load_isolated_wave(self):
+        """The isolated audio's waveform, drawn over the original's (from its finished file; or, while the job is still
+        running, from what has been filled in so far)."""
+        path = media.audio_path(self.media_path, self.project.audio_track, True)
+        if self.isolation_job is not None and self._iso_live is not None:
+            self.editor.wave.set_isolated(self._iso_live, self._iso_live_done / media.RATE)
+        elif path.exists() and self.isolated_ready():
+            self.editor.wave.set_isolated(media.open_audio(path))
+        else:
+            self.editor.wave.set_isolated(None)
+        self._show_isolated_overlay()
+
+    def _show_isolated_overlay(self):
+        """The isolated waveform is shown while it is being made, and for a clip that uses it."""
+        self.editor.wave.set_show_isolated(self.isolation_job is not None or self._effective_source() == "isolated")
 
     # ------------------------------------------------------------------ audio source (original / isolated)
     def isolated_ready(self) -> bool:
@@ -552,10 +566,8 @@ class MainWindow(QMainWindow):
     def _apply_source(self):
         """Makes playback and the waveform follow the clip being edited."""
         self.editor.show_source(self.editor.clip.source, self.isolated_ready())
-        iso = self._effective_source() == "isolated"
-        self.player.use_isolated(iso)
-        if iso != self._wave_isolated:
-            self._load_audio()
+        self.player.use_isolated(self._effective_source() == "isolated")
+        self._show_isolated_overlay()
 
     def on_source_requested(self, source: str):
         c = self.editor.clip
@@ -612,6 +624,11 @@ class MainWindow(QMainWindow):
         out = media.isolated_pcm_path(self.media_path, track)
         job = isolation.IsolationJob(status.python, pcm_in, out, isolation.model(), parent=self)
         self.isolation_job = job
+        self._iso_live = np.zeros(pcm_in.stat().st_size // 4, dtype=np.int16)   # filled in as windows finish
+        self._iso_live_done = 0
+        self.editor.wave.set_isolated(self._iso_live, 0.0)
+        self._show_isolated_overlay()
+        job.partial.connect(lambda upto: self._isolation_partial(job, upto))
         self._job_state["isolation"] = 0.0
         self._refresh_job_label()
         job.progress.connect(lambda p: self._job_progress("isolation", p))
@@ -619,14 +636,31 @@ class MainWindow(QMainWindow):
 
         def done(ok: bool, err: str):
             self.isolation_job = None
+            self._iso_live = None
             self._job_state.pop("isolation", None)
             self._refresh_job_label()
+            if not ok:
+                self._load_isolated_wave()   # nothing (or the earlier version) to overlay any more
             if ok:
                 self._adopt_isolated_audio(track, "Vocals isolated.")
             elif err:
                 QMessageBox.warning(self, "Isolating vocals failed", err)
         job.done.connect(done)
         job.start()
+
+    def _isolation_partial(self, job, upto: float):
+        """A window finished: add its part of the isolated audio to the overlay (a rough mono mix; the exact one is
+        built from the finished file)."""
+        if job is not self.isolation_job or self._iso_live is None:
+            return
+        end = min(int(upto * media.RATE), len(self._iso_live))
+        lo = self._iso_live_done
+        if end <= lo:
+            return
+        stereo = np.fromfile(job.tmp_path, dtype="<i2", count=2 * (end - lo), offset=44 + 4 * lo).reshape(-1, 2)
+        self._iso_live[lo:lo + len(stereo)] = ((stereo[:, 0].astype(np.int32) + stereo[:, 1]) // 2).astype(np.int16)
+        self._iso_live_done = lo + len(stereo)
+        self.editor.wave.set_isolated(self._iso_live, self._iso_live_done / media.RATE)
 
     def _adopt_isolated_audio(self, track: int, message: str):
         """The isolated (or custom) audio file for `track` is in place: build its waveform, then it can be chosen."""
@@ -686,12 +720,15 @@ class MainWindow(QMainWindow):
             f.unlink(missing_ok=True)
         self.exporter.forget_audio()
         self._sync_isolated()
+        self._load_isolated_wave()
         self.statusBar().showMessage(f"{message} Switch a clip to Isolated in the clip editor (V).", 10000)
 
     def cancel_isolation(self):
         if self.isolation_job:
             job, self.isolation_job = self.isolation_job, None
             job.kill()
+            self._iso_live = None
+            self._load_isolated_wave()
             self._job_state.pop("isolation", None)
             self._refresh_job_label()
             self.statusBar().showMessage("Isolation cancelled.", 5000)
@@ -720,6 +757,7 @@ class MainWindow(QMainWindow):
         media.remove_isolated(self.media_path, track)
         self.exporter.forget_audio()
         self._sync_isolated()
+        self._load_isolated_wave()
 
     def _proxy_ready(self):
         self._proxy_job = None
@@ -1206,6 +1244,9 @@ class MainWindow(QMainWindow):
             j.kill()
         if self.transcript_job:
             self.transcript_job.kill()
+        if self.isolation_job:   # never leave the worker running (it would keep the GPU busy) or its partial file behind
+            self.isolation_job.kill()
+            self.isolation_job = None
         self.exporter.shutdown()
         media.remove_export_audio(self.media_path)
         self.video.close()

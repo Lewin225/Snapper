@@ -107,18 +107,20 @@ assert "isolation" not in win._job_state and "Vocals isolated" in win.statusBar(
 
 # --- the per-clip switch
 mpv_aid = lambda: win.player.mpv.aid
-wave_rms = lambda: float(np.sqrt((np.asarray(win.editor.wave.samples, dtype=np.float32) ** 2).mean()))
-before = wave_rms()
+rms = lambda a: float(np.sqrt((np.asarray(a, dtype=np.float32) ** 2).mean()))
+before = rms(win.editor.wave.samples)
+assert not win.editor.wave.show_iso and win.editor.wave.iso_samples is not None, "loaded, but only shown for a clip that uses it"
 assert mpv_aid() == 1
 iso_btn.click()
 QTest.qWait(1500)
-assert win.editor.clip.source == "isolated" and iso_btn.isChecked() and win._wave_isolated
-assert wave_rms() < before * 0.9, (wave_rms(), before)
+assert win.editor.clip.source == "isolated" and iso_btn.isChecked() and win.editor.wave.show_iso
+assert rms(win.editor.wave.iso_samples) < before * 0.9, (rms(win.editor.wave.iso_samples), before)
+assert rms(win.editor.wave.samples) == before, "the original stays as it was; the isolated audio is drawn over it"
 assert mpv_aid() == 2, f"the isolated audio is the video's extra track, got aid={mpv_aid()}"
 print("ok   Isolated: the waveform switches to the dialogue-only audio and mpv plays the extra audio track")
 win.handle_key(type("K", (), {"key": lambda s: Qt.Key_V, "modifiers": lambda s: Qt.NoModifier})())
 QTest.qWait(1000)
-assert win.editor.clip.source == "original" and mpv_aid() == 1 and abs(wave_rms() - before) < 1e-6 and not win._wave_isolated
+assert win.editor.clip.source == "original" and mpv_aid() == 1 and not win.editor.wave.show_iso
 win.handle_key(type("K", (), {"key": lambda s: Qt.Key_V, "modifiers": lambda s: Qt.NoModifier})())
 QTest.qWait(1000)
 assert win.editor.clip.source == "isolated"
@@ -135,10 +137,10 @@ assert c2.source == "isolated", "a new clip is cut from the audio that was last 
 orig_clip = win.project.add(Clip(50.0, 52.0, "original line", True, {"character": "B"}))
 win.edit(orig_clip)
 QTest.qWait(800)
-assert orig_btn.isChecked() and mpv_aid() == 1 and not win._wave_isolated, "selecting a clip shows its own source"
+assert orig_btn.isChecked() and mpv_aid() == 1 and not win.editor.wave.show_iso, "selecting a clip shows its own source"
 win.edit(clip)
 QTest.qWait(800)
-assert iso_btn.isChecked() and mpv_aid() == 2 and win._wave_isolated
+assert iso_btn.isChecked() and mpv_aid() == 2 and win.editor.wave.show_iso
 print("ok   each clip remembers Original/Isolated; selecting it switches waveform and audio; new clips inherit the last choice")
 
 # --- saved in the project
@@ -174,10 +176,19 @@ win._confirm_reisolate = lambda: True
 size_before = iso_wav.stat().st_size
 win.start_isolation()
 wait(lambda: win.isolation_job is not None, "job started", 20000)
-wait(lambda: "Isolating" in win.statusBar().currentMessage() or "Loading" in win.statusBar().currentMessage(), "worker running", 120000)
+wait(lambda: win._iso_live_done > 0, "the first window finished", 240000)
+wv = win.editor.wave
+assert wv.show_iso and wv.iso_upto and wv.iso_upto > 30 and wv.iso_samples is win._iso_live, "the overlay fills in as windows finish"
+assert np.abs(win._iso_live[:int(wv.iso_upto * 44100)]).max() > 0 and not win._iso_live[int(50 * 44100):].any(), "filled up to the finished part only"
+view_pm = wv._render_peaks(0.0, 40.0, 800, 130)      # the overlay is drawn: pixels of the second colour appear in the finished part
+img = view_pm.toImage()
+iso_col = wv.iso_color().rgb()
+assert any(img.pixelColor(x, y).rgb() & 0xFFFFFF == iso_col & 0xFFFFFF for x in range(0, 800, 7) for y in range(18, 130)), "no isolated peaks drawn"
+print(f"ok   while isolating, the isolated waveform fills in over the original (done up to {wv.iso_upto:.0f} s)")
 win.cancel_isolation()
 QTest.qWait(500)
-assert win.isolation_job is None and "isolation" not in win._job_state
+assert win.isolation_job is None and "isolation" not in win._job_state and win._iso_live is None
+assert wv.iso_samples is not None and wv.iso_upto is None, "back to the finished isolated audio"
 assert iso_wav.exists() and iso_wav.stat().st_size == size_before and not Path(str(iso_wav) + ".tmp").exists()
 print("ok   cancelling keeps the earlier isolated audio and removes the partial file")
 
@@ -210,8 +221,8 @@ assert np.sqrt((head ** 2).mean()) > 1000 and np.abs(tail).max() == 0, "the tone
 assert abs(int(win.editor.wave.samples[int(10 * 44100)])) >= 0 and win.isolated_ready()
 orig_btn.click(); iso_btn.click()
 QTest.qWait(1200)
-assert win.editor.clip.source == "isolated" and mpv_aid() == 2 and win._wave_isolated
-w = np.asarray(win.editor.wave.samples, dtype=np.float32)
+assert win.editor.clip.source == "isolated" and mpv_aid() == 2 and win.editor.wave.show_iso
+w = np.asarray(win.editor.wave.iso_samples, dtype=np.float32)
 assert np.sqrt((w[:int(80 * 44100)] ** 2).mean()) > 1000, "the waveform now shows the custom audio"
 print("ok   Load custom audio replacement: any audio file becomes the Isolated audio, placed at 0 and padded to the episode's exact length")
 picked["p"] = WORK / "excerpt.mp4.srt"
