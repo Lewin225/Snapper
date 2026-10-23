@@ -19,6 +19,7 @@ from .export_dialog import ExportSettingsDialog
 from .pathnames import INVALID_HELP, VALID_INPUT_PATTERN, clean_tag
 from . import engine, engine_dialog, isolation, launcher, recent
 from .progress import JobBars, ProxyBanner
+from .tape_scrub import TapeScrub
 from .titles import section_title
 from .clips_panel import ClipsPanel
 from .editor import ClipEditor
@@ -86,6 +87,7 @@ class MainWindow(QMainWindow):
         self.jobs: list = []
         self._smooth = False
         self._scrubbing = False               # the waveform's playhead is being dragged
+        self._scrub_kind = "chunks"           # ... and what is heard meanwhile (tape, chunks or off; see set_scrub_mode)
         self._scrub_resume = False            # ... while playback was running
         self._scrub_held = False              # ... and it is stopped for now because the mouse is still
         self._scrub_idle = QTimer(self, singleShot=True, interval=SCRUB_HOLD_MS, timeout=self._scrub_hold)
@@ -333,6 +335,20 @@ class MainWindow(QMainWindow):
         self._action(a, "Processing model…", self.choose_isolation_model)
         self.act_isolate_remove = self._action(a, "Remove processed audio", self.remove_isolation)
         a.aboutToShow.connect(self._update_audio_menu)
+        a.addSeparator()
+        scrub = a.addMenu("Scrub sound (dragging the waveform)")
+        group = QActionGroup(self)
+        self.act_scrub_mode = {}
+        for key, text in (("tape", "Tape (the audio under the cursor, at the speed you drag)"),
+                          ("chunks", "Playback (short pieces of the video's audio)"),
+                          ("off", "Muted")):
+            act = QAction(text, self, checkable=True)
+            act.triggered.connect(lambda _c=False, k=key: self.set_scrub_mode(k))
+            group.addAction(act)
+            scrub.addAction(act)
+            self.act_scrub_mode[key] = act
+        self.tape = TapeScrub()
+        self.set_scrub_mode(QSettings("snapper", "snapper").value("scrub/sound", "tape"), save=False)
         e = m.addMenu("&Export")
         self.act_export = self._action(e, "Export new and changed clips", lambda: self.export_clips())
         self.act_export_all = self._action(e, "Re-export all clips", lambda: self.export_clips(force=True))
@@ -1007,8 +1023,16 @@ class MainWindow(QMainWindow):
         self._scrub_held = False
         if on:
             self._scrub_resume = not self.player.paused
-            self._scrub_idle.start()
+            self._scrub_kind = "chunks" if self._scrub_mode == "tape" and not TapeScrub.available() else self._scrub_mode
+            if self._scrub_kind == "chunks":
+                self._scrub_idle.start()
+            else:   # tape or muted: the video stops for the drag (it plays on at the end) and the sound is not mpv's
+                if self._scrub_resume:
+                    self.player.mpv.pause = True
+                if self._scrub_kind == "tape":
+                    self._begin_tape()
         else:
+            self.tape.end()
             self._scrub_idle.stop()
             self.player.settle(self.editor.wave.playhead)   # exactly where the drag ended, before playing on
             if self._scrub_resume:
@@ -1018,11 +1042,25 @@ class MainWindow(QMainWindow):
 
     def _wave_scrub(self, t: float):
         self.player.scrub(t, exact=True)   # the frame under the cursor, not the nearest keyframe
-        if self._scrub_resume:
+        self.tape.set_target(t)
+        if self._scrub_resume and self._scrub_kind == "chunks":
             if self._scrub_held:            # moving again after a hold: play on from here (the scrub audio)
                 self._scrub_held = False
                 self.player.mpv.pause = False
             self._scrub_idle.start()
+
+    def _begin_tape(self):
+        wave = self.editor.wave
+        t = wave.playhead
+        self.tape.begin(t, wave.samples, wave.iso_samples, self.isolated_upto(), self.editor.clip.source == "isolated")
+
+    def set_scrub_mode(self, mode: str, save: bool = True):
+        """What is heard while the waveform is dragged: tape (the samples under the cursor at the cursor's speed, backwards
+        too), playback (mpv plays short pieces after each seek) or nothing."""
+        self._scrub_mode = mode if mode in self.act_scrub_mode else "tape"
+        self.act_scrub_mode[self._scrub_mode].setChecked(True)
+        if save:
+            QSettings("snapper", "snapper").setValue("scrub/sound", self._scrub_mode)
 
     def _scrub_hold(self):
         """The mouse has been still for a moment during a drag: stop where the playhead is."""

@@ -4,7 +4,7 @@ A bulk audio snipper and transcriber for TV episodes. Open an episode, cut each 
 guides you, tag the lines (character, and any tags you define), and export one self-contained audio file per line with its
 transcript. Made for building voice sets for game mods (Source engine and the like), but it stays generic.
 
-- **Fast manual cutting:** scrub, set in/out, play-stop-resume; click a transcript line to jump to it; drag the waveform to scrub (or pan, with a clip selected) and hold the right button then drag to select a clip. Nothing is ever cut automatically.
+- **Fast manual cutting:** scrub, set in/out, play-stop-resume; click a transcript line to jump to it; drag the waveform to scrub with tape-style sound (or pan, with a clip selected) and hold the right button then drag to select a clip. Nothing is ever cut automatically.
 - **Transcripts:** use the video's subtitles, load an `.srt`, or generate one with [WhisperX](https://github.com/m-bain/whisperX) (installed on first use, see below).
 - **Library:** tag, filter, duplicate and delete clips; clips are saved with the project.
 - **Export:** WAV (16/24/32-bit) or MP3, mono or stereo, your own folder layout and file names (`{character}_{text}`), transcript as embedded tag / LRC / file name, optional auto export.

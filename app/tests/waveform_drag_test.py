@@ -66,7 +66,9 @@ QTest.qWait(600)
 assert abs(win.player.pos - mid) < 0.3 and abs(wave.playhead - win.player.pos) < 0.3, (win.player.pos, mid)
 print("ok   no clip selected: dragging the waveform scrubs the playhead under the timeline")
 
-# --- while playing: it plays (the scrub audio) as the mouse moves, holds when the mouse is still, plays on when let go
+# --- while playing, in "playback" scrub mode: it plays (mpv's scrub audio) as the mouse moves, holds when the mouse is still,
+# plays on when let go
+win.set_scrub_mode("chunks", save=False)
 win.player.seek(100.0)
 win.player.mpv.pause = False
 QTest.qWait(1200)
@@ -116,6 +118,75 @@ release(x0 + 40)
 QTest.qWait(600)
 assert win.player.paused
 print("ok   a drag that started paused leaves it paused")
+
+# --- tape scrub: the voice itself (numpy), then the drag
+import numpy as np
+from snapper.media import RATE
+from snapper.tape_scrub import TapeVoice, LAG
+ramp = (np.arange(RATE * 20) % 30000).astype(np.int16)     # a sawtooth: the value tells where the sample came from
+tone = (np.sin(np.arange(RATE * 20) * 2 * np.pi * 440 / RATE) * 12000).astype(np.int16)
+
+def run(voice, seconds, target_at):
+    out = []
+    for i in range(int(seconds * RATE / 512)):
+        voice.set_target(target_at(i * 512 / RATE))
+        out.append(voice.render(512))
+    return np.concatenate(out)
+
+v = TapeVoice(); v.begin(5.0, tone, None, 0.0, False)
+fwd = run(v, 1.0, lambda t: 5.0 + t)                         # the cursor moves at normal speed: normal speed sound
+assert abs(v.speed - 1.0) < 0.05 and abs(v.pos / RATE - 5.9) < 0.12, (v.speed, v.pos / RATE)
+assert np.abs(fwd[RATE // 2:]).max() > 0.2, "the audio under the cursor is heard"
+w = np.abs(np.fft.rfft(fwd[RATE // 2:RATE // 2 + 8192] * np.hanning(8192)))
+assert abs(np.argmax(w) * RATE / 8192 - 440) < 15, "at normal speed the pitch is unchanged"
+v.begin(5.0, tone, None, 0.0, False)
+fast = run(v, 1.0, lambda t: 5.0 + 2 * t)
+w = np.abs(np.fft.rfft(fast[RATE // 2:RATE // 2 + 8192] * np.hanning(8192)))
+assert abs(np.argmax(w) * RATE / 8192 - 880) < 25, "twice as fast is an octave up"
+print("ok   tape scrub: normal speed keeps the pitch, twice as fast is an octave higher")
+
+v.begin(10.0, ramp, None, 0.0, False)
+back = run(v, 1.0, lambda t: 10.0 - t)
+assert v.speed < -0.9 and v.pos / RATE < 9.2, (v.speed, v.pos / RATE)
+seg = back[RATE // 2:RATE // 2 + 4000]
+assert np.median(np.diff(seg)) < 0, "moving backwards plays the audio backwards"
+print("ok   moving the cursor backwards plays the audio backwards")
+
+v.begin(5.0, tone, None, 0.0, False)
+run(v, 0.5, lambda t: 5.0 + t)
+still = run(v, 1.5, lambda t: 5.5 + 0.5)                     # the cursor stops: the sound dies away, then silence
+assert np.abs(still[-RATE // 2:]).max() < 1e-4 and abs(v.pos / RATE - 6.0) < 0.01, "silent when still"
+assert np.abs(still[:2000]).max() > 0.01, "...but not cut off sharply"
+v.ending = True
+assert np.abs(run(v, 0.2, lambda t: 6.0)[-2000:]).max() < 1e-4
+print("ok   a still cursor is silent (the sound dies away, no click)")
+
+iso = (tone // 4)
+v.begin(3.0, tone, iso, 8.0, True)                            # processed audio where it exists, the original beyond
+assert v._array() is iso
+v.pos = 7.5 * RATE
+assert v._array() is tone
+print("ok   the processed audio is used where it exists, the original beyond it")
+
+# the drag: tape and muted modes stop the video for the drag and play on after; playback mode is above
+for mode in ("tape", "off"):
+    win.set_scrub_mode(mode, save=False)
+    win.player.seek(100.0)
+    win.player.mpv.pause = False
+    QTest.qWait(700)
+    press(x0); move.last = x0
+    move(x0 + 60, steps=6)
+    QTest.qWait(150)
+    assert win.player.paused, f"{mode}: the video is stopped while the waveform is dragged"
+    assert (win.tape.active and win.tape.voice.target > 0) == (mode == "tape")
+    here = wave.playhead
+    release(x0 + 60)
+    QTest.qWait(700)
+    assert not win.player.paused and win.player.pos > here - 0.3 and not win.tape.active, mode
+    win.player.mpv.pause = True
+    QTest.qWait(200)
+print("ok   tape and muted scrub: the video stops for the drag and plays on from where it was released")
+win.set_scrub_mode("chunks", save=False)
 
 # --- endless dragging: the pointer is put back after every move, so a drag can go on past the edge of the screen
 class Pointer:
