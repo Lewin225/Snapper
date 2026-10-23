@@ -1,8 +1,8 @@
 # Snapper as a Flatpak on the KDE runtime (real Breeze theme, portals for file dialogs).
-#   flatpak-builder --user --install --force-clean build-dir local.snapper.Snapper.yml
-#   flatpak run local.snapper.Snapper [video-or-project]
+#   flatpak-builder --user --install --force-clean build-dir io.github.Lewin225.Snapper.yml
+#   flatpak run io.github.Lewin225.Snapper [video-or-project]
 # The app id is a placeholder: change it (and the file names) to one you own before publishing anywhere.
-id: local.snapper.Snapper
+id: io.github.Lewin225.Snapper
 runtime: org.kde.Platform
 runtime-version: '6.11'
 sdk: org.kde.Sdk
@@ -157,9 +157,9 @@ modules:
       - cp -r snapper speech_backend /app/lib/snapper-app/
       - find /app/lib/snapper-app -name __pycache__ -prune -exec rm -rf {} +
       - install -Dm755 snapper.sh /app/bin/snapper
-      - install -Dm644 local.snapper.Snapper.desktop /app/share/applications/local.snapper.Snapper.desktop
-      - install -Dm644 local.snapper.Snapper.svg /app/share/icons/hicolor/scalable/apps/local.snapper.Snapper.svg
-      - install -Dm644 local.snapper.Snapper.metainfo.xml /app/share/metainfo/local.snapper.Snapper.metainfo.xml
+      - install -Dm644 io.github.Lewin225.Snapper.desktop /app/share/applications/io.github.Lewin225.Snapper.desktop
+      - install -Dm644 io.github.Lewin225.Snapper.svg /app/share/icons/hicolor/scalable/apps/io.github.Lewin225.Snapper.svg
+      - install -Dm644 io.github.Lewin225.Snapper.metainfo.xml /app/share/metainfo/io.github.Lewin225.Snapper.metainfo.xml
     sources:
       - type: dir
         path: ../app/snapper
@@ -169,4 +169,4 @@ modules:
         dest: speech_backend
       - type: dir
         path: .
-        skip: [local.snapper.Snapper.yml]
+        skip: [io.github.Lewin225.Snapper.yml]
