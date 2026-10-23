@@ -35,9 +35,12 @@ folder), into your *system Python*, or you can point it at an installation you a
 (about 5 GB download); everything else works without either tool. Loading subtitles from the video or an `.srt` file needs
 nothing extra.
 
-**Isolating the dialogue:** the isolated audio sits beside the original. Pick *Original* or *Isolated* per clip in the clip
-editor (or press `V`); the waveform, what you hear and what gets exported all follow that choice. *Audio → Load custom audio
-replacement…* lets you use an audio file made with another model or tool instead (it must line up with the episode from its start).
+**Processed audio:** *Audio → Generate processed audio using audio-separator* removes the music and effects, leaving the
+dialogue. It runs in the background and can be used as soon as the first part is done (playback returns to the original beyond
+the finished part). The processed audio sits beside the original: pick *Original* or *Processed* per clip in the clip editor
+(or press `V`); the waveform, what you hear and what gets exported all follow that choice. *Audio → Import custom processed
+audio…* lets you use an audio file made with another model or tool instead (it is placed at the start of the episode and
+padded or cut to its length). *Transcript → Generate using WhisperX → From processed audio* often hears the words better.
 
 ## Tests
 
