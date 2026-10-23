@@ -173,9 +173,22 @@ class EngineDialog(QDialog):
                                                 break_system=target == "system" and self.break_system)
         self.installer.stage.connect(self.stage.setText)
         self.installer.progress.connect(lambda line: self.log.setText(line[:200]))
+        self.installer.transfer.connect(self._show_transfer)
         self.installer.done.connect(self._install_done)
         self.pages.setCurrentIndex(1)
         self.installer.start()
+
+    def _show_transfer(self, t):
+        """A file is downloading: a real bar, the rate and the time left; otherwise a bar that just keeps moving."""
+        if t is None or not t.total:
+            self.bar.setRange(0, 0)
+            self.bar.setTextVisible(False)
+            return
+        self.bar.setRange(0, 1000)
+        self.bar.setValue(int(1000 * t.done / t.total))
+        self.bar.setTextVisible(True)
+        self.bar.setFormat(f"{100 * t.done / t.total:.0f}%")
+        self.log.setText(engine.describe(t))
 
     def _stop(self):
         if self.installer:

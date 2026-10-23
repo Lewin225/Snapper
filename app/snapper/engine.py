@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
+import time
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -231,12 +234,86 @@ def free_gb(path: Path) -> float:
     return shutil.disk_usage(p).free / 1e9
 
 
+@dataclass
+class Transfer:
+    """Where a pip download is: the file being fetched, and the totals so far."""
+    name: str          # the file, e.g. "torch-2.8.0-cp313-cp313-manylinux_2_28_x86_64.whl"
+    done: int          # bytes of this file received
+    total: int         # its size
+    rate: float        # bytes per second, over the last few seconds (0 until there is a measure)
+    all_bytes: int     # received for every file so far, this one included
+    files: int         # how many files have been started
+
+
+class TransferMeter:
+    """Reads pip's output (run with `--progress-bar raw`: "Downloading <file> (<size>)" and "Progress <done> of <total>" lines)
+    and keeps the numbers for a progress display."""
+    WINDOW = 4.0   # seconds the rate is measured over
+
+    def __init__(self, clock=time.monotonic):
+        self.clock = clock
+        self.name, self.done, self.total = "", 0, 0
+        self.finished = 0     # bytes of the files that are complete
+        self.files = 0
+        self._samples: deque = deque()
+
+    def feed(self, line: str) -> Optional[Transfer]:
+        """One line of pip's output. A Transfer when the numbers changed, else None."""
+        m = re.match(r"Progress (\d+) of (\d+)\s*$", line)
+        if m and self.name:
+            self.done, self.total = int(m.group(1)), int(m.group(2))
+            now = self.clock()
+            self._samples.append((now, self.finished + self.done))
+            while len(self._samples) > 2 and now - self._samples[0][0] > self.WINDOW:
+                self._samples.popleft()
+            return self.snapshot()
+        m = re.match(r"Downloading (\S+?\.(?:whl|tar\.gz|zip))\b", line)   # (metadata lines are indented: "  Downloading ...")
+        if m:
+            self.finished += self.total if self.name else 0
+            self.name, self.done, self.total = m.group(1), 0, 0
+            self.files += 1
+            self._samples.append((self.clock(), self.finished))
+        return None
+
+    def snapshot(self) -> Transfer:
+        rate = 0.0
+        if len(self._samples) >= 2:
+            (t0, b0), (t1, b1) = self._samples[0], self._samples[-1]
+            if t1 - t0 >= 0.5:
+                rate = max(0.0, (b1 - b0) / (t1 - t0))
+        return Transfer(self.name, self.done, self.total, rate, self.finished + self.done, self.files)
+
+
+def format_bytes(n: float) -> str:
+    for unit, size in (("GB", 1e9), ("MB", 1e6), ("KB", 1e3)):
+        if n >= size:
+            return f"{n / size:.1f} {unit}" if size >= 1e6 else f"{n / size:.0f} {unit}"
+    return f"{n:.0f} B"
+
+
+def format_duration(seconds: float) -> str:
+    s = int(round(seconds))
+    return f"{s // 3600}:{s % 3600 // 60:02d}:{s % 60:02d}" if s >= 3600 else f"{s // 60}:{s % 60:02d}"
+
+
+def describe(t: Transfer) -> str:
+    """The two lines under the progress bar while something is downloading."""
+    short = re.sub(r"(-cp\d+.*|-py\d.*|\.tar\.gz|\.zip|\.whl)$", "", t.name)
+    parts = [f"{short}: {format_bytes(t.done)} of {format_bytes(t.total)}"]
+    if t.rate > 0:
+        parts.append(f"{format_bytes(t.rate)}/s")
+        if t.total > t.done:
+            parts.append(f"{format_duration((t.total - t.done) / t.rate)} left")
+    return " · ".join(parts) + f"\nDownloaded so far: {format_bytes(t.all_bytes)} in {t.files} file{'s' if t.files != 1 else ''}"
+
+
 class EngineInstaller(QObject):
     """Installs an engine's packages in the background, either into a new private environment under Snapper's data
     folder (target "private") or into the system Python's user site (target "system", `pip install --user`).
     A private install that fails or is cancelled is removed completely, so a half-installed environment is never left."""
     progress = Signal(str)       # the latest line of output
     stage = Signal(str)          # what it is doing
+    transfer = Signal(object)    # a Transfer while a file downloads; None when something else is going on
     done = Signal(bool, str)     # ok, message
 
     def __init__(self, engine: Engine, target: str = "private", device: str = "gpu", parent=None,
@@ -251,6 +328,7 @@ class EngineInstaller(QObject):
         self._cancelled = False
         self._step = 0
         self._nodeps_done = False
+        self._meter = TransferMeter()
         self._python: Optional[Path] = None
 
     def start(self):
@@ -295,7 +373,7 @@ class EngineInstaller(QObject):
         elif self._step == 2:
             where = "your system Python" if self.target == "system" else "Snapper's environment"
             self.stage.emit(f"Downloading and installing {self.engine.title} into {where} (this takes a while)…")
-            args = ["-m", "pip", "install", "--no-cache-dir", "--progress-bar", "off", "--no-input"]
+            args = ["-m", "pip", "install", "--no-cache-dir", "--progress-bar", "raw", "--no-input"]
             if self.target == "system":
                 args.append("--user")        # into ~/.local, never into the system's own folders
                 if self.break_system:
@@ -325,6 +403,15 @@ class EngineInstaller(QObject):
         for line in bytes(self._proc.readAll()).decode(errors="replace").replace("\r", "\n").splitlines():
             if "externally-managed-environment" in line:   # pip's first line; the tail below would lose it
                 self.pep668 = True
+            snap = self._meter.feed(line)
+            if snap is not None:
+                self.transfer.emit(snap)
+                continue                  # progress numbers are not log lines
+            if line.startswith("Installing collected packages"):
+                self.transfer.emit(None)
+                self.stage.emit(f"Installing {self.engine.title}'s packages (unpacking what was downloaded)…")
+            elif line.startswith("Collecting"):
+                self.transfer.emit(None)
             if line.strip():
                 self._tail = (self._tail + [line.strip()])[-12:]
                 self.progress.emit(line.strip())
