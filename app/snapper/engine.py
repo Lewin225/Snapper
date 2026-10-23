@@ -82,8 +82,9 @@ WHISPERX = Engine(
 
 # audio-separator 0.47.1's own requirements, except `diffq`: that is only imported by the Demucs models, which Snapper does not
 # use (BS-Roformer and MDX are), and it has no wheel for Python 3.13 on Linux, so installing it needs a C++ compiler that a Flatpak
-# does not have. So audio-separator goes in with --no-deps and these are installed beside it.
-_SEPARATOR_DEPS = ['audioop-lts>=0.2.1; python_version >= "3.13"', "beartype<0.19.0,>=0.18.5", "einops>=0.7", "julius>=0.2",
+# does not have. So audio-separator goes in with --no-deps and these are installed beside it. `audioread` is imported by the VR
+# models but not declared by audio-separator (librosa used to bring it in, version 1.0 no longer does).
+_SEPARATOR_DEPS = ['audioop-lts>=0.2.1; python_version >= "3.13"', "audioread>=2.1.9", "beartype<0.19.0,>=0.18.5", "einops>=0.7", "julius>=0.2",
                    "librosa>=0.10", "ml_collections", "numpy>=2", "onnx-weekly", "onnx2torch-py313>=1.6", "packaging",
                    "pydub>=0.25", "pyyaml", "requests>=2", "resampy>=0.4", "rotary-embedding-torch<0.7.0,>=0.6.1",
                    "samplerate==0.1.0", "scipy<2.0.0,>=1.13.0", "six>=1.16", "soundfile>=0.12", "torch<3,>=2.3", "tqdm"]

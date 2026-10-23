@@ -60,6 +60,7 @@ assert list(SEP.modules.values()) == ["audio-separator", "PyTorch", "ONNX Runtim
 assert SEP.no_deps_packages == ["audio-separator==0.47.1"], "audio-separator itself goes in with --no-deps"
 assert not any("diffq" in p for p in SEP.pip_packages("gpu") + SEP.pip_packages("cpu") + SEP.no_deps_packages), \
     "diffq (only for Demucs models, no wheel for Python 3.13, needs a compiler) is not installed"
+assert "audioread>=2.1.9" in SEP.pip_packages("cpu"), "imported by audio-separator but not declared by it"
 assert "onnxruntime-gpu>=1.17" in SEP.pip_packages("gpu") and "onnxruntime>=1.17" in SEP.pip_packages("cpu")
 assert any(p.startswith("torch") for p in SEP.pip_packages("gpu")) and "samplerate==0.1.0" in SEP.pip_packages("gpu")
 assert WX.pip_args("gpu") == [] and "https://download.pytorch.org/whl/cpu" in WX.pip_args("cpu"), "CPU installs use PyTorch's CPU wheels"
