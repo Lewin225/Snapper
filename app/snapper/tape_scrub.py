@@ -16,7 +16,7 @@ from .media import RATE
 
 LAG = 0.05          # seconds: the sound follows the cursor with this much give, which is what smooths the speed
 MAX_SPEED = 12.0    # times normal speed, either way
-LEVEL = 1.6         # the waveform's mono audio measured 1.3 dB below what mpv plays (test clip); by ear it is about 3 dB, so +4.1 dB
+LEVEL = 2.0         # the waveform's mono audio measured 1.3 dB below what mpv plays (test clip); by ear it needs about +6 dB
 FADE = 0.06         # seconds to let the sound die away when the drag ends
 KNEE = 0.7          # above this level peaks are squashed softly
 STILL = 0.04        # speed (times normal) below which nothing is heard

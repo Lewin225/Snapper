@@ -122,7 +122,7 @@ print("ok   a drag that started paused leaves it paused")
 # --- tape scrub: the voice itself (numpy), then the drag
 import numpy as np
 from snapper.media import RATE
-from snapper.tape_scrub import TapeVoice, LAG
+from snapper.tape_scrub import TapeVoice, LAG, LEVEL
 ramp = (np.arange(RATE * 20) % 30000).astype(np.int16)     # a sawtooth: the value tells where the sample came from
 tone = (np.sin(np.arange(RATE * 20) * 2 * np.pi * 440 / RATE) * 12000).astype(np.int16)
 
@@ -169,7 +169,7 @@ for speed in (1.0, 2.0, 0.5, -1.5):                          # granular: the pit
     v = TapeVoice(); v.begin(10.0, tone, None, 0.0, False, granular=True)
     g = run(v, 1.2, lambda t: 10.0 + speed * t)
     assert abs(pitch(g[RATE // 2:RATE // 2 + 16384]) - 440) < 30, (speed, pitch(g[RATE // 2:RATE // 2 + 16384]))
-    assert 0.1 < np.abs(g[RATE // 2:]).max() < 0.7, (speed, np.abs(g[RATE // 2:]).max())
+    assert 0.1 < np.abs(g[RATE // 2:]).max() < 0.85, (speed, np.abs(g[RATE // 2:]).max())
 v = TapeVoice(); v.begin(5.0, tone, None, 0.0, False, granular=True)
 run(v, 0.5, lambda t: 5.0 + t)
 still = run(v, 1.5, lambda t: 6.0)
@@ -183,7 +183,7 @@ win.volume.setValue(50)
 assert abs(win._preview_gain() - 0.125) < 1e-9 and abs(win.tape.voice.gain - 0.125) < 1e-9
 v = TapeVoice(); v.begin(5.0, tone, None, 0.0, False); loud = np.abs(run(v, 1.0, lambda t: 5.0 + t)).max()
 v = TapeVoice(); v.gain = 0.125; v.begin(5.0, tone, None, 0.0, False); quiet = np.abs(run(v, 1.0, lambda t: 5.0 + t)).max()
-assert abs(quiet / loud - 0.125) < 0.01 and abs(loud - 12000 / 32768 * 1.6) < 0.03, (loud, quiet)
+assert abs(quiet / loud - 0.125) < 0.01 and abs(loud - 12000 / 32768 * LEVEL) < 0.03, (loud, quiet)
 win.toggle_mute()
 assert win._preview_gain() == 0.0 and win.tape.voice.gain == 0.0
 win.toggle_mute()
