@@ -63,6 +63,9 @@ class KeyFilter(QObject):
         return self.win.handle_key(ev)
 
 
+FALLBACK_MARGIN = 1.0   # seconds before the end of the isolated part at which playback returns to the original
+
+
 class MainWindow(QMainWindow):
     def __init__(self, path: Path):
         """`path` is a video file, or a project file (which records its video)."""
@@ -93,6 +96,7 @@ class MainWindow(QMainWindow):
         self.isolation_job: Optional[isolation.IsolationJob] = None
         self._iso_live: Optional[np.ndarray] = None  # mono waveform of the isolated audio while it is being made
         self._iso_live_done = 0                      # how many frames of it are filled in
+        self._playing_iso = False                    # whether the isolated audio is the one being heard
 
         # --- widgets
         self.video = VideoWidget(self.player)
@@ -551,13 +555,33 @@ class MainWindow(QMainWindow):
     def isolated_ready(self) -> bool:
         return media.has_isolated(self.media_path, self.project.audio_track)
 
+    def isolated_upto(self) -> float:
+        """How much of the isolated audio can be used, in seconds: all of it once finished, the finished part while it is
+        still being made, otherwise none."""
+        if self.isolated_ready():
+            return float("inf")
+        if self.isolation_job is not None and self._iso_live_done:
+            return self._iso_live_done / media.RATE
+        return 0.0
+
+    def isolated_usable(self) -> bool:
+        return self.isolated_upto() > 0
+
     def _effective_source(self) -> str:
-        """The audio the current clip really uses: its own choice, unless the isolated audio is not there."""
-        return "isolated" if self.editor.clip.source == "isolated" and self.isolated_ready() else "original"
+        """The audio the current clip is cut from: its own choice, unless there is no isolated audio to use."""
+        return "isolated" if self.editor.clip.source == "isolated" and self.isolated_usable() else "original"
+
+    def _playing_isolated(self, t: float) -> bool:
+        """Whether the isolated audio is what is heard at time t: the clip uses it and t is inside the part that exists
+        (a little before its end, since mpv reads ahead)."""
+        return self.editor.clip.source == "isolated" and t < self.isolated_upto() - FALLBACK_MARGIN
 
     def _sync_isolated(self):
         """Tells the player about this track's isolated audio (if any), and the editor whether it can be chosen."""
-        path = media.isolated_pcm_path(self.media_path, self.project.audio_track)
+        track = self.project.audio_track
+        path = media.isolated_pcm_path(self.media_path, track)
+        if not path.exists() and self.isolation_job is not None and self._iso_live_done:
+            path = self.isolation_job.tmp_path   # still being made: the finished part can be played already
         reload_needed = self.player.set_isolated(str(path) if path.exists() else None, len(self.info.audio))
         if reload_needed:
             self._use_proxy_or_original()
@@ -565,13 +589,29 @@ class MainWindow(QMainWindow):
 
     def _apply_source(self):
         """Makes playback and the waveform follow the clip being edited."""
-        self.editor.show_source(self.editor.clip.source, self.isolated_ready())
-        self.player.use_isolated(self._effective_source() == "isolated")
+        self._update_playing_source(force=True)
         self._show_isolated_overlay()
+
+    def _update_playing_source(self, force: bool = False):
+        """Plays the isolated audio where it exists and the original beyond it, switching as the playhead crosses the
+        boundary (while it is still being made), and shows the one in use."""
+        c = self.editor.clip
+        want = self._playing_isolated(self.player.pos)
+        if not force and want == self._playing_iso:
+            return
+        self._playing_iso = want
+        self.player.use_isolated(want)
+        usable = self.isolated_usable()
+        note = ""
+        if self.isolation_job is not None and not self.isolated_ready() and usable:
+            done = self.isolated_upto()
+            note = f"Isolated so far up to {int(done) // 60}:{int(done) % 60:02d}; beyond it the original plays."
+        shown = "original" if c.source == "isolated" and usable and not want else c.source
+        self.editor.show_source(shown, usable, note)
 
     def on_source_requested(self, source: str):
         c = self.editor.clip
-        if source == "isolated" and not self.isolated_ready():
+        if source == "isolated" and not self.isolated_usable():
             self.editor.show_source(c.source, False)   # the button springs back until there is something to switch to
             if self._ask_isolate_now():
                 self.start_isolation()
@@ -640,6 +680,8 @@ class MainWindow(QMainWindow):
             self._job_state.pop("isolation", None)
             self._refresh_job_label()
             if not ok:
+                self._iso_live_done = 0
+                self._sync_isolated()        # drop the half-made track from the player
                 self._load_isolated_wave()   # nothing (or the earlier version) to overlay any more
             if ok:
                 self._adopt_isolated_audio(track, "Vocals isolated.")
@@ -661,6 +703,10 @@ class MainWindow(QMainWindow):
         self._iso_live[lo:lo + len(stereo)] = ((stereo[:, 0].astype(np.int32) + stereo[:, 1]) // 2).astype(np.int16)
         self._iso_live_done = lo + len(stereo)
         self.editor.wave.set_isolated(self._iso_live, self._iso_live_done / media.RATE)
+        if lo == 0:
+            self._sync_isolated()   # the first finished window: the player can add the (growing) file as a track
+        else:
+            self._apply_source()    # the boundary moved
 
     def _adopt_isolated_audio(self, track: int, message: str):
         """The isolated (or custom) audio file for `track` is in place: build its waveform, then it can be chosen."""
@@ -722,12 +768,16 @@ class MainWindow(QMainWindow):
         self._sync_isolated()
         self._load_isolated_wave()
         self.statusBar().showMessage(f"{message} Switch a clip to Isolated in the clip editor (V).", 10000)
+        if self.project.auto_export:   # clips that were waiting for the isolated audio
+            self._auto_timer.start()
 
     def cancel_isolation(self):
         if self.isolation_job:
             job, self.isolation_job = self.isolation_job, None
             job.kill()
             self._iso_live = None
+            self._iso_live_done = 0
+            self._sync_isolated()
             self._load_isolated_wave()
             self._job_state.pop("isolation", None)
             self._refresh_job_label()
@@ -1025,6 +1075,14 @@ class MainWindow(QMainWindow):
             if not auto:
                 self.statusBar().showMessage("Everything is already exported.", 5000)
             return
+        if self.isolation_job is not None and not self.isolated_ready():
+            waiting = [c for c in targets if c.source == "isolated"]   # their audio is still being made
+            if waiting:
+                targets = [c for c in targets if c not in waiting]
+                self.statusBar().showMessage(f"{len(waiting)} clip(s) use isolated audio and will export when the "
+                                             "isolation has finished.", 8000)
+                if not targets:
+                    return
         self._confirm_moves(targets, s)
         self.exporter.mark_queued(targets)
         track = self.project.audio_track
@@ -1139,6 +1197,8 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ playback + keys
     def on_position(self, t: float):
+        if self.editor.clip.source == "isolated":
+            self._update_playing_source()
         self.editor.wave.playhead = t
         self.editor.wave.update()
         if not self.slider.isSliderDown():

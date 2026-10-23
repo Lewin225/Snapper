@@ -86,6 +86,8 @@ def main():
     try:
         with open(tmp, "wb") as out:
             out.write(wav_header(total))
+            out.truncate(44 + total * 4)   # the file is full length from the start (silence not yet written), so a player
+            out.seek(44)                   # that opened it keeps working while it fills in
             tail = None
             written = 0                                    # frames of the output that are final
             start = 0

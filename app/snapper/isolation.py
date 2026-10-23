@@ -105,5 +105,6 @@ class IsolationJob(QObject):
         if code == 0 and self._saw_done and self._out.exists():
             self.done.emit(True, "")
         else:
+            self.tmp_path.unlink(missing_ok=True)   # never leave a half-written file behind
             tail = self._worker_error or "\n".join(t for t in self._err.decode(errors="replace").splitlines()[-6:] if t.strip())
             self.done.emit(False, tail or f"the isolation process exited with code {code}")

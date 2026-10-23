@@ -88,6 +88,42 @@ print("ok   without audio-separator, Isolate asks via the engine dialog and does
 win.start_isolation()
 wait(lambda: win.isolation_job is not None, "isolation started (after the audio is decoded)", 60000)
 assert "isolation" in win._job_state
+mpv_aid = lambda: win.player.mpv.aid
+audio_tracks = lambda: sum(1 for t in win.player.mpv.track_list if t["type"] == "audio")
+
+# --- usable as soon as the first window is done; playback returns to the original beyond the finished part
+wait(lambda: win._iso_live_done > 0, "the first window finished", 240000)
+upto = win.isolated_upto()
+assert 30 < upto < 100 and not win.isolated_ready() and win.isolated_usable()
+assert iso_btn.isEnabled() and audio_tracks() == 2, "the growing file is added to the player as an extra audio track"
+win.player.seek(10.0); QTest.qWait(600)
+iso_btn.click(); QTest.qWait(600)
+assert win.editor.clip.source == "isolated" and iso_btn.isChecked() and "so far" in iso_btn.toolTip() and mpv_aid() == 2
+win.player.seek(95.0); QTest.qWait(1200)
+assert mpv_aid() == 1 and orig_btn.isChecked() and win.editor.clip.source == "isolated", "beyond the finished part: original plays"
+win.player.seek(10.0); QTest.qWait(1200)
+assert mpv_aid() == 2 and iso_btn.isChecked(), "and back inside it: isolated again"
+print(f"ok   usable while still being made (done to {upto:.0f} s): Isolated plays inside it, the original beyond it, and back")
+win.player.play_range(upto - 4.0, None)    # playing across the boundary switches by itself
+QTest.qWait(500)
+assert mpv_aid() == 2
+for _ in range(100):
+    QTest.qWait(100)
+    if win.player.pos > upto - 0.5:
+        break
+QTest.qWait(600)
+assert mpv_aid() == 1 and orig_btn.isChecked(), (win.player.pos, mpv_aid())
+win.player.stop()
+print("ok   playing across the end of the finished part falls back to the original on its own")
+waiting = win.project.add(Clip(12.0, 14.0, "waiting", True, {"character": "Z"}, source="isolated"))
+win.project.set_export_settings(ExportSettings(output_dir=str(WORK / "out_wait"), name_template="w{n}").to_json())
+(WORK / "out_wait").mkdir()
+win._confirm_moves = lambda *a, **k: None
+win.export_clips(force=True)
+assert win.exporter.state(waiting) == "none" and "will export when the isolation has finished" in win.statusBar().currentMessage()
+win.project.remove(waiting)
+orig_btn.click(); win.player.seek(0.0); QTest.qWait(500)
+print("ok   a clip that needs isolated audio waits for the isolation to finish instead of failing")
 wait(lambda: win.isolation_job is None and win.isolated_ready() and media.audio_path(episode, 0, True).exists(), "isolation finished")
 QTest.qWait(500)
 iso_wav = media.isolated_pcm_path(episode, 0)
@@ -106,7 +142,6 @@ assert win.isolated_ready() and iso_btn.isEnabled() and "Only the dialogue" in i
 assert "isolation" not in win._job_state and "Vocals isolated" in win.statusBar().currentMessage()
 
 # --- the per-clip switch
-mpv_aid = lambda: win.player.mpv.aid
 rms = lambda a: float(np.sqrt((np.asarray(a, dtype=np.float32) ** 2).mean()))
 before = rms(win.editor.wave.samples)
 assert not win.editor.wave.show_iso and win.editor.wave.iso_samples is not None, "loaded, but only shown for a clip that uses it"

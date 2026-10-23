@@ -225,8 +225,9 @@ class ClipEditor(QWidget):
         self.save_btn.setEnabled(c.start is not None and c.end is not None)
         self.deselect_btn.setEnabled(c.start is not None or c.id is not None)
 
-    def show_source(self, source: str, available: bool):
-        """Shows which audio the clip uses; `available` says whether isolated audio exists for this episode."""
+    def show_source(self, source: str, available: bool, note: str = ""):
+        """Shows which audio is in use; `available` says whether isolated audio can be used (some of it, at least);
+        `note` explains a partial one."""
         for name, b in self.source_btns.items():
             b.setChecked(name == source)
         iso = self.source_btns["isolated"]
@@ -235,7 +236,7 @@ class ClipEditor(QWidget):
                            "until you isolate the vocals again (Audio menu).")
             iso.setStyleSheet("color: palette(link);")
         else:
-            iso.setToolTip("Only the dialogue, with music and effects removed (V switches)." if available else
+            iso.setToolTip(("Only the dialogue, with music and effects removed (V switches). " + note).strip() if available else
                            "No isolated audio yet. Click to isolate the vocals with audio-separator.")
             iso.setStyleSheet("")
         self.source_btns["original"].setToolTip("The episode's own audio (V switches).")

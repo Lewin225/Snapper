@@ -100,6 +100,9 @@ class Player(QObject):
         """Makes the isolated-dialogue audio (a WAV the same length as the video) available as one more audio track,
         or removes it (None). `n_audio` is how many audio tracks the video itself has. Returns True when the video
         has to be loaded again to drop or replace an extra track it already has."""
+        if path and self._iso and self._iso.endswith(".tmp") and path == self._iso[:-4]:
+            self._iso = path   # the file that was being written was renamed when it finished: mpv keeps reading it
+            return False
         changed = path != self._iso
         had = self._iso_loaded
         self._iso, self._n_audio = path, n_audio
