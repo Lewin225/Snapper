@@ -123,7 +123,7 @@ class TimeScrubber(QWidget):
         if e.button() == Qt.LeftButton and self._value is not None and self._edit is None:
             self._drag_x = e.position().x()
             self._acc = 0.0
-            self.relative.start(e.globalPosition())   # the pointer is hidden and held in place: drag as far as you like
+            self.relative.start(e.globalPosition())   # the pointer is held in place: drag as far as you like
             self.dragging.emit(True)
             self.update()
 

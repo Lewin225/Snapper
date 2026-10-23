@@ -1,4 +1,4 @@
-"""Endless dragging. While a drag is on, the pointer is hidden and put back where the drag began after every move, so
+"""Endless dragging. While a drag is on, the pointer is put back where the drag began after every move, so
 movement is read as "how far since last time" and never runs out against the edge of the screen (a mouse with a ball or a
 small pad can scrub as far as it likes). Where the pointer cannot be moved by the program (a native Wayland window) the warp
 fails once, is noticed, and the drag carries on as an ordinary one."""
@@ -31,12 +31,13 @@ class RelativeDrag:
         self.warping = False
 
     def start(self, anchor: QPointF, current: Optional[QPointF] = None):
-        """The drag begins with the pointer at `anchor` (and now at `current`, if it has moved since)."""
+        """The drag begins with the pointer at `anchor` (and now at `current`, if it has moved since). The pointer stays
+        visible, as the left-right arrow."""
         self.anchor = anchor.toPoint()
         self.last = (current or anchor).toPoint()
         self.active, self.warping, self._stale = True, True, 0
         self._sync: Optional[bool] = None   # whether a warp is answered by a report of the pointer at the anchor
-        self.widget.setCursor(Qt.BlankCursor)
+        self.widget.setCursor(Qt.SizeHorCursor)
 
     def step(self, pos: QPointF) -> tuple[int, int]:
         """The pointer was reported at `pos`: how far it moved since the previous report."""

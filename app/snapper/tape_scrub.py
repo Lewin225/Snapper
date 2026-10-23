@@ -16,8 +16,9 @@ from .media import RATE
 
 LAG = 0.05          # seconds: the sound follows the cursor with this much give, which is what smooths the speed
 MAX_SPEED = 12.0    # times normal speed, either way
-LEVEL = 1.16        # the waveform's mono audio is 1.3 dB quieter than what mpv plays for the same moment (measured)
+LEVEL = 1.6         # the waveform's mono audio measured 1.3 dB below what mpv plays (test clip); by ear it is about 3 dB, so +4.1 dB
 FADE = 0.06         # seconds to let the sound die away when the drag ends
+KNEE = 0.7          # above this level peaks are squashed softly
 STILL = 0.04        # speed (times normal) below which nothing is heard
 GRAIN = 0.05        # granular: seconds per grain...
 HOP = 0.0125        # ...and between grains (4 overlap, so the Hann windows add up to a steady level)
@@ -123,7 +124,10 @@ class TapeVoice:
         level1 = float(np.clip(self.level + (-moved if self.ending else moved), 0.0, 1.0))
         ramp = np.linspace(self.level, level1, n, dtype=np.float32)
         self.level = level1
-        return s * amp * ramp * self.gain
+        y = s * amp * ramp * self.gain
+        big = np.abs(y) > KNEE   # peaks that the extra level pushes up are rounded off instead of clipping
+        y[big] = np.sign(y[big]) * (KNEE + (1 - KNEE) * np.tanh((np.abs(y[big]) - KNEE) / (1 - KNEE)))
+        return y
 
 
 BLOCK = 256         # frames per write (about 6 ms)

@@ -183,7 +183,7 @@ win.volume.setValue(50)
 assert abs(win._preview_gain() - 0.125) < 1e-9 and abs(win.tape.voice.gain - 0.125) < 1e-9
 v = TapeVoice(); v.begin(5.0, tone, None, 0.0, False); loud = np.abs(run(v, 1.0, lambda t: 5.0 + t)).max()
 v = TapeVoice(); v.gain = 0.125; v.begin(5.0, tone, None, 0.0, False); quiet = np.abs(run(v, 1.0, lambda t: 5.0 + t)).max()
-assert abs(quiet / loud - 0.125) < 0.01 and abs(loud - 12000 / 32768 * 1.16) < 0.03, (loud, quiet)
+assert abs(quiet / loud - 0.125) < 0.01 and abs(loud - 12000 / 32768 * 1.6) < 0.03, (loud, quiet)
 win.toggle_mute()
 assert win._preview_gain() == 0.0 and win.tape.voice.gain == 0.0
 win.toggle_mute()
@@ -256,9 +256,9 @@ start_t, shown, spp, warps, cursor = endless_drag(Pointer(), per_event=-3)
 want = start_t + 3 * 900 * spp                          # 2700 px of hand movement, far more than the waveform is wide
 assert 2700 > wave.width() and abs(shown - want) < 0.5, (shown, want)
 assert len(warps) > 800 and len(set(warps[:-1])) == 1, "the pointer is put back at the same anchor after the moves"
-assert cursor == Qt.BlankCursor and wave.cursor().shape() != Qt.BlankCursor, "hidden while dragging, shown again after"
+assert cursor == Qt.SizeHorCursor and wave.cursor().shape() != Qt.SizeHorCursor, "a left-right arrow while dragging, back to normal after"
 assert wave.relative.warp and not wave.relative.active
-print(f"ok   endless drag: 2700 px of movement through a {wave.width()} px waveform, the pointer held at its anchor and hidden")
+print(f"ok   endless drag: 2700 px of movement through a {wave.width()} px waveform, the pointer held at its anchor and shown as a left-right arrow")
 
 start_t, shown, spp, warps, cursor = endless_drag(Pointer(sync=False), per_event=-3)
 assert abs(shown - (start_t + 3 * 900 * spp)) < 0.5 + 8 * 3 * spp, "also where the system sends no report for a warp"
