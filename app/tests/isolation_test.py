@@ -62,6 +62,10 @@ assert [a.text() for a in audio_menu.actions()] == ["Generate processed audio us
                                                      "Processing model…", "Remove processed audio"], [a.text() for a in audio_menu.actions()]
 win._update_audio_menu()
 assert win.act_isolate.isEnabled() and not win.act_isolate_cancel.isEnabled() and not win.act_isolate_remove.isEnabled()
+_tm = next(a.menu() for a in win.menuBar().actions() if a.text() == "&Transcript")
+_gen = next(a.menu() for a in _tm.actions() if a.text() == "Generate using WhisperX")
+_gen.aboutToShow.emit()
+assert not _gen.actions()[1].isEnabled() and _gen.actions()[0].isEnabled(), "From processed audio is disabled until there is some"
 print("ok   Audio menu: Generate processed audio using audio-separator / Import / Cancel / model / Remove; the Processed button says there is none yet")
 
 # --- asking for isolated audio that doesn't exist offers to make it (declined: nothing happens)
@@ -207,6 +211,24 @@ win.on_source_requested("isolated")
 print("ok   switching a clip's source marks it Changed for export")
 
 # --- cancelling keeps the existing isolated audio and leaves nothing behind
+# a WhisperX transcript made from the original audio: finishing or importing processed audio suggests redoing it
+suggested, started = [], []
+win._suggest_retranscribe = lambda: (suggested.append(1), True)[1]
+win.start_transcription = lambda source="original": started.append(source)
+for src, expect in (("whisperx:original", True), ("whisperx:processed", False), (None, False)):
+    win.project.set_transcript([{"start": 1.0, "end": 2.0, "text": "hi", "words": []}], src)
+    suggested.clear(); started.clear()
+    win._isolation_ready(win.project.audio_track)
+    assert bool(suggested) == expect and started == (["processed"] if expect else []), (src, suggested, started)
+del win.start_transcription, win._suggest_retranscribe
+win.project.set_transcript(None)
+tmenu = next(a.menu() for a in win.menuBar().actions() if a.text() == "&Transcript")
+gen = next(a.menu() for a in tmenu.actions() if a.text() == "Generate using WhisperX")
+gen.aboutToShow.emit()
+assert [a.text() for a in gen.actions()] == ["From original audio", "From processed audio"] and gen.actions()[1].isEnabled()
+print("ok   a WhisperX transcript from the original audio: processed audio suggests regenerating it (not for other transcripts); "
+      "Transcript > Generate using WhisperX has From original / From processed")
+
 # choosing the model when processed audio already exists: the question offers the models and remembers the pick
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QComboBox, QDialogButtonBox

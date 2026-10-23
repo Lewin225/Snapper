@@ -68,6 +68,7 @@ class Project(QObject):
         self.auto_export = False                     # export clips as soon as they are created or changed
         self.proxy_enabled = True                    # use (and generate) the fast-scrubbing proxy video
         self.selected_clip: Optional[int] = None     # id of the clip open in the editor, if any
+        self.transcript_source: Optional[str] = None
         self.transcript: Optional[list[dict]] = None  # the transcript lines (with word times), kept with the project
         self.export_settings: Optional[dict] = None   # see export.ExportSettings; None until the user sets it up
         self._next_id = 1
@@ -108,6 +109,7 @@ class Project(QObject):
         self.auto_export = bool(d.get("auto_export", False))
         self.selected_clip = d.get("selected_clip")
         self.transcript = d.get("transcript")
+        self.transcript_source = d.get("transcript_source")   # "whisperx:original" / "whisperx:processed", else not WhisperX
         self.export_settings = d.get("export_settings")
         self.clips = [Clip.from_json(c) for c in d.get("clips", [])]
         self._next_id = d.get("next_id", max((c.id for c in self.clips), default=0) + 1)
@@ -130,15 +132,18 @@ class Project(QObject):
             "audio_track": self.audio_track, "selected_clip": self.selected_clip,
             "tag_types": self.tag_types, "tag_kinds": self.tag_kinds, "tag_values": self.tag_values,
             "next_id": self._next_id, "clips": [c.to_json() for c in self.clips],
-            "transcript": self.transcript, "export_settings": self.export_settings}, indent=1))
+            "transcript": self.transcript, "transcript_source": self.transcript_source, "export_settings": self.export_settings}, indent=1))
         os.replace(tmp, self.path)
 
     def save_as(self, path: Path):
         self.path = path
         self.save()
 
-    def set_transcript(self, lines: list[dict]):
+    def set_transcript(self, lines: list[dict], source: Optional[str] = None):
+        """`source` says where the lines came from: "whisperx:original" or "whisperx:processed" for a WhisperX run on that
+        audio, None for subtitles."""
         self.transcript = lines
+        self.transcript_source = source
         self.dirty.emit()
 
     def set_export_settings(self, settings: dict):

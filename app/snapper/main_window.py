@@ -283,7 +283,10 @@ class MainWindow(QMainWindow):
         f.addSeparator()
         self._action(f, "&Quit", self.close, QKeySequence.Quit)
         t = m.addMenu("&Transcript")
-        self.act_gen = self._action(t, "Generate using WhisperX", self.start_transcription)
+        gen = t.addMenu("Generate using WhisperX")
+        self._action(gen, "From original audio", lambda: self.start_transcription("original"))
+        self.act_gen_processed = self._action(gen, "From processed audio", lambda: self.start_transcription("processed"))
+        gen.aboutToShow.connect(lambda: self.act_gen_processed.setEnabled(self.isolated_ready()))
         self.menu_video_subs = t.addMenu("Load from video")
         self.menu_video_subs.aboutToShow.connect(self._fill_subtitle_menu)
         self._action(t, "Load subtitles file…", self.load_subtitle_file)
@@ -821,6 +824,15 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"{message} Switch a clip to Processed in the clip editor (V).", 10000)
         if self.project.auto_export:   # clips that were waiting for the isolated audio
             self._auto_timer.start()
+        if self.project.transcript_source == "whisperx:original" and not self.transcript_job and self._suggest_retranscribe():
+            self.start_transcription("processed")
+
+    def _suggest_retranscribe(self) -> bool:
+        return QMessageBox.question(
+            self, "Regenerate the transcript?",
+            "The transcript was generated from the original audio. With the music and effects removed, WhisperX often "
+            "hears the words and their timings more accurately.\n\nRegenerate it from the processed audio now? "
+            "The current transcript stays until the new one is finished.") == QMessageBox.Yes
 
     def cancel_background_work(self):
         """Stops everything running in the background: proxy, decoding, subtitle reading, transcription, isolation and
@@ -890,14 +902,22 @@ class MainWindow(QMainWindow):
         self.transcript_area.refresh()
         self.editor.wave.update()
 
-    def start_transcription(self):
+    def start_transcription(self, source: str = "original"):
+        """Generates the transcript with WhisperX from the original audio, or from the processed audio (cleaner speech,
+        so often better words and timings; it is the same length, so the times line up)."""
         if self.transcript_job:
+            return
+        if source == "processed" and not self.isolated_ready():
+            self.statusBar().showMessage("There is no processed audio to transcribe yet.", 6000)
             return
         status = engine_dialog.ensure_engine(engine.WHISPERX, self)   # says what is missing and offers to install it
         if status is None:
             self.statusBar().showMessage("WhisperX is not set up. Subtitles from the video or a file work without it.", 8000)
             return
-        job = TranscriptJob(self.media_path, status.python, self.project.audio_track, self)
+        if source == "processed":
+            job = TranscriptJob(media.isolated_pcm_path(self.media_path, self.project.audio_track), status.python, 0, self)
+        else:
+            job = TranscriptJob(self.media_path, status.python, self.project.audio_track, self)
         self.transcript_area.set_busy("Transcribing…", 0.0)
         self.transcript_job = job
         job.lines_ready.connect(lambda lines: self._accumulate(lines))
@@ -914,7 +934,7 @@ class MainWindow(QMainWindow):
                 self._cancelled.discard(job)
                 self.statusBar().showMessage("Transcription cancelled.", 5000)
             elif ok:
-                self.project.set_transcript(self.transcript().lines)
+                self.project.set_transcript(self.transcript().lines, f"whisperx:{source}")
                 self.statusBar().showMessage("Transcript ready", 5000)
             elif job.cancelled:
                 self.statusBar().showMessage("Transcription cancelled.", 5000)

@@ -6,6 +6,10 @@ PY=${PY:-python3}
 export SNAPPER_HWDEC=${SNAPPER_HWDEC:-nvdec-copy} QT_QPA_PLATFORM=${QT_QPA_PLATFORM:-xcb} QT_XCB_GL_INTEGRATION=xcb_egl
 export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json
 failed=0
+# The tests leave caches and projects in their temp folders; /tmp is memory here (and counts against a container's memory limit),
+# so they get a folder of their own that is removed at the end.
+export TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
 "$(dirname "$0")/fetch_media.sh" || { echo "could not get the test video; stopping" >&2; exit 1; }
 for t in smoke editor_test typing_test layout_test play_clip_test progress_test project_test tag_kinds_test theme_test \
          prune_test launcher_test engine_test isolation_test transcript_ui_test export_test export_ui_test; do
