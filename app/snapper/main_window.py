@@ -82,6 +82,7 @@ class MainWindow(QMainWindow):
         self.player = Player(self)
         self.pending = Clip()          # the new clip being cut; tags stay set between clips
         self.jobs: list = []
+        self._cancelled: set = set()   # jobs stopped on purpose: their ending is not reported as a failure
         self._job_state: dict[str, Optional[float]] = {}   # running job -> fraction done (None = unknown)
         self._acc = Transcript()
         self.transcript_job: Optional[TranscriptJob] = None
@@ -168,6 +169,7 @@ class MainWindow(QMainWindow):
 
         self.status_jobs = JobBars()
         self.statusBar().addPermanentWidget(self.status_jobs)
+        self.status_jobs.cancel_requested.connect(self.cancel_background_work)
         self._build_menu()
 
         # --- wiring
@@ -466,6 +468,8 @@ class MainWindow(QMainWindow):
             self._refresh_job_label()
 
             def done(_ok, _err):
+                if job in self.jobs:
+                    self.jobs.remove(job)
                 self._job_state.pop("subtitles", None)
                 self._refresh_job_label()
                 self._refresh_subtitle_labels()
@@ -509,10 +513,16 @@ class MainWindow(QMainWindow):
             state.pop(name, None)
             self._refresh_job_label()
             self._update_export_state()
+            if job in self.jobs:
+                self.jobs.remove(job)
             if ok:
                 on_ok()
             else:
-                self.statusBar().showMessage(f"{name} failed: {err[:200]}", 10000)
+                if job in self._cancelled:
+                    self._cancelled.discard(job)
+                    err = "cancelled"
+                else:
+                    self.statusBar().showMessage(f"{name} failed: {err[:200]}", 10000)
                 if on_fail:
                     on_fail(err[:200])
                 if name == "proxy":
@@ -771,7 +781,17 @@ class MainWindow(QMainWindow):
         if self.project.auto_export:   # clips that were waiting for the isolated audio
             self._auto_timer.start()
 
-    def cancel_isolation(self):
+    def cancel_background_work(self):
+        """Stops everything running in the background: proxy, decoding, subtitle reading, transcription, isolation and
+        exports (the clip being written finishes; the ones waiting are dropped)."""
+        for j in list(self.jobs) + ([self.transcript_job] if self.transcript_job else []):
+            self._cancelled.add(j)
+            j.kill()
+        self.cancel_isolation(quiet=True)
+        self.exporter.cancel_waiting()
+        self.statusBar().showMessage("Background work cancelled.", 5000)
+
+    def cancel_isolation(self, quiet: bool = False):
         if self.isolation_job:
             job, self.isolation_job = self.isolation_job, None
             job.kill()
@@ -781,7 +801,8 @@ class MainWindow(QMainWindow):
             self._load_isolated_wave()
             self._job_state.pop("isolation", None)
             self._refresh_job_label()
-            self.statusBar().showMessage("Isolation cancelled.", 5000)
+            if not quiet:
+                self.statusBar().showMessage("Isolation cancelled.", 5000)
 
     def choose_isolation_model(self):
         names = [f"{label}  [{file}]" for file, label in isolation.MODELS]
@@ -848,9 +869,14 @@ class MainWindow(QMainWindow):
             self._job_state.pop("transcript", None)
             self._refresh_job_label()
             self.transcript_job = None
-            if ok:
+            if job in self._cancelled:
+                self._cancelled.discard(job)
+                self.statusBar().showMessage("Transcription cancelled.", 5000)
+            elif ok:
                 self.project.set_transcript(self.transcript().lines)
                 self.statusBar().showMessage("Transcript ready", 5000)
+            elif job.cancelled:
+                self.statusBar().showMessage("Transcription cancelled.", 5000)
             else:
                 QMessageBox.warning(self, "Transcription failed", err)
         job.done.connect(done)

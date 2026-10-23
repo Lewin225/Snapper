@@ -569,6 +569,27 @@ class ExportManager(QObject):
     def busy(self) -> bool:
         return self._pending > 0
 
+    def cancel_waiting(self) -> int:
+        """Drops the clips still waiting to be written (the one being written finishes). Returns how many."""
+        n = 0
+        while self._worker is not None:
+            try:
+                job = self._worker.jobs.get_nowait()
+            except queue.Empty:
+                break
+            if job is None:   # a shutdown request must not be lost
+                self._worker.jobs.put(None)
+                break
+            self._transient.pop(job[0].id, None)
+            self._delete_old.pop(job[0].id, None)
+            self.state_changed.emit(job[0].id)
+            n += 1
+        self._pending -= n
+        self._batch_done += n
+        if n:
+            self._check_idle()
+        return n
+
     def shutdown(self):
         if self._worker is not None:
             self._worker.jobs.put(None)

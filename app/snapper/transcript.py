@@ -92,6 +92,7 @@ class TranscriptJob(QObject):
         self._buf = b""
         self._err = b""
         self._saw_done = False
+        self.cancelled = False
         self._proc = QProcess(self)
         self._proc.setProgram(str(python))
         self._proc.setArguments(["-u", str(SPEECH_BACKEND_DIR / "transcribe_worker.py"), str(media),
@@ -107,6 +108,7 @@ class TranscriptJob(QObject):
         self._proc.start()
 
     def kill(self):
+        self.cancelled = True
         self._proc.kill()
 
     def _read(self):
@@ -124,6 +126,9 @@ class TranscriptJob(QObject):
 
     def _finished(self, code, _status):
         ok = code == 0 and self._saw_done
+        if self.cancelled:   # stopped on purpose: not a failure to report
+            self.done.emit(False, "")
+            return
         self.done.emit(ok, "" if ok else self._err.decode(errors="replace")[-600:] or f"worker exited with {code}")
 
 

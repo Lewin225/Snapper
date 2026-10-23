@@ -210,8 +210,11 @@ if DEV_WX.exists():
             break
         QTest.qWait(50)
     QTest.qWait(500)
+    assert QApplication.activeModalWidget() is None, "a deliberately stopped transcription must not pop up an error"
+    assert job.cancelled and "cancelled" in win.statusBar().currentMessage()
 win.close()
 QTest.qWait(500)
+assert QApplication.activeModalWidget() is None
 print("ok   'Generate using WhisperX': asks when the engine is missing, does nothing if declined, starts when ready")
 app.processEvents()
 print("ENGINE OK")
