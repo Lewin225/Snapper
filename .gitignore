@@ -11,3 +11,6 @@ flatpak/repo/
 
 # fetched by app/tests/fetch_media.sh
 app/tests/media/tears_of_steel.mp4
+
+# editor/agent tooling
+.serena/
