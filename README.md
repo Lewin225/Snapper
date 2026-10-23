@@ -29,7 +29,7 @@ project, if one exists; opening a project file opens it.
 
 ### Optional tools: WhisperX and audio-separator
 Transcribing and vocal isolation use big Python packages (PyTorch and friends), so they are not part of Snapper. The first
-time you use *Generate using WhisperX* (Transcript menu) or *Isolate vocals using audio-separator* (Audio menu), Snapper checks
+time you use *Generate using WhisperX* (Transcript menu) or *Generate processed audio using audio-separator* (Audio menu), Snapper checks
 what is missing and offers to install it for a **GPU or a CPU**: *just for Snapper* (a private environment in the app's data
 folder), into your *system Python*, or you can point it at an installation you already have. A GPU is strongly recommended
 (about 5 GB download); everything else works without either tool. Loading subtitles from the video or an `.srt` file needs

@@ -68,7 +68,7 @@ class ClipEditor(QWidget):
             b.setFocusPolicy(Qt.NoFocus)
         self.deselect_btn.clicked.connect(self.deselect_requested)
         self.save_btn.clicked.connect(self.save_requested)
-        self.source_btns = {"original": QPushButton("Original"), "isolated": QPushButton("Isolated")}
+        self.source_btns = {"original": QPushButton("Original"), "isolated": QPushButton("Processed")}
         self.source_group = QButtonGroup(self)
         self.source_group.setExclusive(True)
         for name, b in self.source_btns.items():
@@ -232,12 +232,12 @@ class ClipEditor(QWidget):
             b.setChecked(name == source)
         iso = self.source_btns["isolated"]
         if source == "isolated" and not available:
-            iso.setToolTip("This clip uses isolated audio, but it is no longer there. It plays and exports the original "
-                           "until you isolate the vocals again (Audio menu).")
+            iso.setToolTip("This clip uses processed audio, but it is no longer there. It plays and exports the original "
+                           "until you generate or import processed audio again (Audio menu).")
             iso.setStyleSheet("color: palette(link);")
         else:
-            iso.setToolTip(("Only the dialogue, with music and effects removed (V switches). " + note).strip() if available else
-                           "No isolated audio yet. Click to isolate the vocals with audio-separator.")
+            iso.setToolTip(("The processed audio: dialogue with music and effects removed, or your own import (V switches). " + note).strip() if available else
+                           "No processed audio yet. Click to generate it with audio-separator.")
             iso.setStyleSheet("")
         self.source_btns["original"].setToolTip("The episode's own audio (V switches).")
 

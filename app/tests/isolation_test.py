@@ -56,13 +56,13 @@ def wait(cond, what, ms=400000):
 # --- before: nothing isolated, the switch explains itself
 iso_btn, orig_btn = win.editor.source_btns["isolated"], win.editor.source_btns["original"]
 assert orig_btn.isChecked() and not iso_btn.isChecked() and not win.isolated_ready()
-assert "No isolated audio yet" in iso_btn.toolTip()
+assert "No processed audio yet" in iso_btn.toolTip()
 audio_menu = next(a.menu() for a in win.menuBar().actions() if a.text() == "&Audio")
-assert [a.text() for a in audio_menu.actions()] == ["Isolate vocals using audio-separator", "Load custom audio replacement…", "Cancel isolation",
-                                                     "Isolation model…", "Remove isolated audio"], [a.text() for a in audio_menu.actions()]
+assert [a.text() for a in audio_menu.actions()] == ["Generate processed audio using audio-separator", "Import custom processed audio…", "Cancel processing",
+                                                     "Processing model…", "Remove processed audio"], [a.text() for a in audio_menu.actions()]
 win._update_audio_menu()
 assert win.act_isolate.isEnabled() and not win.act_isolate_cancel.isEnabled() and not win.act_isolate_remove.isEnabled()
-print("ok   Audio menu: Isolate vocals using audio-separator / Cancel / model / Remove; the Isolated button says there is none yet")
+print("ok   Audio menu: Generate processed audio using audio-separator / Import / Cancel / model / Remove; the Processed button says there is none yet")
 
 # --- asking for isolated audio that doesn't exist offers to make it (declined: nothing happens)
 asked = []
@@ -120,7 +120,7 @@ win.project.set_export_settings(ExportSettings(output_dir=str(WORK / "out_wait")
 (WORK / "out_wait").mkdir()
 win._confirm_moves = lambda *a, **k: None
 win.export_clips(force=True)
-assert win.exporter.state(waiting) == "none" and "will export when the isolation has finished" in win.statusBar().currentMessage()
+assert win.exporter.state(waiting) == "none" and "will export when the processing has finished" in win.statusBar().currentMessage()
 win.project.remove(waiting)
 orig_btn.click(); win.player.seek(0.0); QTest.qWait(500)
 print("ok   a clip that needs isolated audio waits for the isolation to finish instead of failing")
@@ -138,8 +138,8 @@ seam = wav["frames"][int(40 * 44100):int(45 * 44100), 0].astype(np.float32) / 32
 body = wav["frames"][int(10 * 44100):int(30 * 44100), 0].astype(np.float32) / 32768
 assert np.abs(np.diff(seam)).max() <= max(np.abs(np.diff(body)).max() * 1.2, 0.05), "a click at the crossfaded seam"
 print("ok   no click at the crossfaded window seam")
-assert win.isolated_ready() and iso_btn.isEnabled() and "Only the dialogue" in iso_btn.toolTip()
-assert "isolation" not in win._job_state and "Vocals isolated" in win.statusBar().currentMessage()
+assert win.isolated_ready() and iso_btn.isEnabled() and "The processed audio" in iso_btn.toolTip()
+assert "isolation" not in win._job_state and "Processed audio is ready" in win.statusBar().currentMessage()
 
 # --- the per-clip switch
 rms = lambda a: float(np.sqrt((np.asarray(a, dtype=np.float32) ** 2).mean()))
@@ -207,6 +207,29 @@ win.on_source_requested("isolated")
 print("ok   switching a clip's source marks it Changed for export")
 
 # --- cancelling keeps the existing isolated audio and leaves nothing behind
+# choosing the model when processed audio already exists: the question offers the models and remembers the pick
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QComboBox, QDialogButtonBox
+from snapper import isolation
+saved_model = isolation.model()
+other = next(f for f, _n in isolation.MODELS if f != saved_model)
+def answer(pick, accept):
+    dlg = win._processing_dialog
+    combo = dlg.findChild(QComboBox)
+    assert combo.count() == len(isolation.MODELS) and combo.currentData() == isolation.model()
+    if pick:
+        combo.setCurrentIndex(combo.findData(pick))
+    box = dlg.findChild(QDialogButtonBox)
+    box.button(QDialogButtonBox.Ok if accept else QDialogButtonBox.Cancel).click()
+asked_again = []
+QTimer.singleShot(300, lambda: answer(other, False))
+declined = not type(win)._confirm_reisolate(win)
+assert declined and isolation.model() == saved_model, "Cancel keeps the model"
+QTimer.singleShot(300, lambda: answer(other, True))
+accepted = type(win)._confirm_reisolate(win)
+assert accepted and isolation.model() == other, "choosing a model and Generate remembers it"
+isolation.set_model(saved_model)
+print("ok   with processed audio already there, Generate asks which model to use (remembered; Cancel leaves it)")
 win._confirm_reisolate = lambda: True
 size_before = iso_wav.stat().st_size
 win.start_isolation()

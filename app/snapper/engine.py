@@ -84,7 +84,7 @@ SEPARATOR = Engine(
     env_var="SNAPPER_SEP_PYTHON", dev_env="~/envs/sep",
     download_note={"gpu": "about 5 GB (PyTorch and ONNX Runtime with their CUDA libraries)",
                    "cpu": "about 1 GB (CPU-only PyTorch and ONNX Runtime)"},
-    after_note="The first isolation then downloads the vocal model (about 0.7 GB). On a CPU, isolating is very slow.",
+    after_note="The first time, it downloads the audio model (about 0.7 GB). On a CPU, processing is very slow.",
     min_free_gb=12, purpose="separates the dialogue from music and effects")
 
 ENGINES = {e.key: e for e in (WHISPERX, SEPARATOR)}

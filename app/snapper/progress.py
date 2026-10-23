@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QProgressBar, QPushButton, QS
 
 WARN_BG, WARN_FG = "#ffe9a8", "#4d3b00"   # the proxy banner's amber; also the pulse behind background work in the status bar
 
-JOB_NAMES = {"proxy": "Scrub proxy", "audio": "Decoding audio", "transcript": "Transcribing", "isolation": "Isolating vocals",
+JOB_NAMES = {"proxy": "Scrub proxy", "audio": "Decoding audio", "transcript": "Transcribing", "isolation": "Processing audio",
              "subtitles": "Reading subtitles",
              "pcm": "Preparing audio", "export": "Exporting"}
 

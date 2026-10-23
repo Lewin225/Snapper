@@ -310,12 +310,12 @@ class MainWindow(QMainWindow):
         g = m.addMenu("T&ags")
         self._action(g, "Add tag type…", self.add_tag_type)
         a = m.addMenu("&Audio")
-        self.act_isolate = self._action(a, "Isolate vocals using audio-separator", self.start_isolation)
-        self.act_custom_audio = self._action(a, "Load custom audio replacement…", self.load_custom_audio)
-        self.act_isolate_cancel = self._action(a, "Cancel isolation", self.cancel_isolation)
+        self.act_isolate = self._action(a, "Generate processed audio using audio-separator", self.start_isolation)
+        self.act_custom_audio = self._action(a, "Import custom processed audio…", self.load_custom_audio)
+        self.act_isolate_cancel = self._action(a, "Cancel processing", self.cancel_isolation)
         self.act_isolate_cancel.setEnabled(False)
-        self._action(a, "Isolation model…", self.choose_isolation_model)
-        self.act_isolate_remove = self._action(a, "Remove isolated audio", self.remove_isolation)
+        self._action(a, "Processing model…", self.choose_isolation_model)
+        self.act_isolate_remove = self._action(a, "Remove processed audio", self.remove_isolation)
         a.aboutToShow.connect(self._update_audio_menu)
         e = m.addMenu("&Export")
         self.act_export = self._action(e, "Export new and changed clips", lambda: self.export_clips())
@@ -631,7 +631,7 @@ class MainWindow(QMainWindow):
         note = ""
         if self.isolation_job is not None and not self.isolated_ready() and usable:
             done = self.isolated_upto()
-            note = f"Isolated so far up to {int(done) // 60}:{int(done) % 60:02d}; beyond it the original plays."
+            note = f"Processed so far up to {int(done) // 60}:{int(done) % 60:02d}; beyond it the original plays."
         shown = "original" if c.source == "isolated" and usable and not want else c.source
         self.editor.show_source(shown, usable, note)
 
@@ -649,14 +649,39 @@ class MainWindow(QMainWindow):
         self.on_edited()
 
     def _ask_isolate_now(self) -> bool:
-        return QMessageBox.question(self, "Isolate vocals",
-                                    "There is no isolated audio for this episode yet.\n\nIsolate the vocals now with "
-                                    "audio-separator? It runs in the background while you keep working.") == QMessageBox.Yes
+        return self._ask_processing("There is no processed audio for this episode yet.\n\nGenerate it now with "
+                                    "audio-separator? It runs in the background while you keep working.")
 
     def _confirm_reisolate(self) -> bool:
-        return QMessageBox.question(
-            self, "Isolate vocals", "This track has been isolated already. Do it again with the model set now "
-            f"({isolation.model()})? The current isolated audio stays until the new one is ready.") == QMessageBox.Yes
+        return self._ask_processing("This track has processed audio already. Generate it again? The current processed "
+                                    "audio stays until the new one is ready.")
+
+    def _ask_processing(self, text: str) -> bool:
+        """Asks whether to generate processed audio, with the model to use (remembered for next time)."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Generate processed audio")
+        lay = QVBoxLayout(dlg)
+        label = QLabel(text)
+        label.setWordWrap(True)
+        lay.addWidget(label)
+        combo = QComboBox()
+        for file, name in isolation.MODELS:
+            combo.addItem(f"{name}  [{file}]", file)
+        combo.setCurrentIndex(max(0, combo.findData(isolation.model())))
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Model:"))
+        row.addWidget(combo, 1)
+        lay.addLayout(row)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText("Generate")
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        lay.addWidget(buttons)
+        self._processing_dialog = dlg   # tests reach it here
+        if not dlg.exec():
+            return False
+        isolation.set_model(combo.currentData())
+        return True
 
     def toggle_source(self):
         self.on_source_requested("original" if self.editor.clip.source == "isolated" else "isolated")
@@ -673,7 +698,7 @@ class MainWindow(QMainWindow):
         if self.isolation_job:
             return
         if not self.info.audio:
-            QMessageBox.information(self, "Isolate vocals", "This video has no audio to isolate.")
+            QMessageBox.information(self, "Generate processed audio", "This video has no audio to process.")
             return
         status = engine_dialog.ensure_engine(engine.SEPARATOR, self)   # says what is missing and offers to install it
         if status is None:
@@ -710,9 +735,9 @@ class MainWindow(QMainWindow):
                 self._sync_isolated()        # drop the half-made track from the player
                 self._load_isolated_wave()   # nothing (or the earlier version) to overlay any more
             if ok:
-                self._adopt_isolated_audio(track, "Vocals isolated.")
+                self._adopt_isolated_audio(track, "Processed audio is ready.")
             elif err:
-                QMessageBox.warning(self, "Isolating vocals failed", err)
+                QMessageBox.warning(self, "Generating processed audio failed", err)
         job.done.connect(done)
         job.start()
 
@@ -745,13 +770,13 @@ class MainWindow(QMainWindow):
 
     def _pick_audio_file(self) -> Optional[Path]:
         path, _ = QFileDialog.getOpenFileName(
-            self, "Load custom audio replacement", str(self.media_path.parent),
+            self, "Import custom processed audio", str(self.media_path.parent),
             "Audio files (*.wav *.flac *.mp3 *.ogg *.opus *.m4a *.aac *.mka *.wma);;All files (*)")
         return Path(path) if path else None
 
     def _confirm_length_mismatch(self, file_len: float, episode_len: float) -> bool:
         return QMessageBox.question(
-            self, "Load custom audio replacement",
+            self, "Import custom processed audio",
             f"The file is {file_len:.1f} s long but the episode is {episode_len:.1f} s.\n\nIt will be placed at the very "
             "start of the episode, padded with silence or cut at the end. If it doesn't line up with the episode, the "
             "clips will be cut from the wrong moments.\n\nUse it anyway?") == QMessageBox.Yes
@@ -760,14 +785,14 @@ class MainWindow(QMainWindow):
         """Uses an audio file made elsewhere (another model, a stem from a mixing tool…) in place of the isolated audio.
         It must line up with the episode: sample N of the file is taken to be the same moment as sample N of the video."""
         if self.isolation_job:
-            QMessageBox.information(self, "Load custom audio replacement", "Wait for the isolation to finish, or cancel it first.")
+            QMessageBox.information(self, "Import custom processed audio", "Wait for the processing to finish, or cancel it first.")
             return
         src = self._pick_audio_file()
         if src is None:
             return
         length = media.audio_duration(src)
         if length <= 0:
-            QMessageBox.warning(self, "Load custom audio replacement", f"{src.name} is not an audio file I can read.")
+            QMessageBox.warning(self, "Import custom processed audio", f"{src.name} is not an audio file I can read.")
             return
         if abs(length - self.info.duration) > 1.0 and not self._confirm_length_mismatch(length, self.info.duration):
             return
@@ -784,16 +809,16 @@ class MainWindow(QMainWindow):
                        lambda err: self.statusBar().showMessage(f"Could not prepare the audio: {err}", 10000))
 
     def _confirm_replace_audio(self) -> bool:
-        return QMessageBox.question(self, "Load custom audio replacement",
-                                    "This track already has isolated audio. Replace it with this file?") == QMessageBox.Yes
+        return QMessageBox.question(self, "Import custom processed audio",
+                                    "This track already has processed audio. Replace it with this file?") == QMessageBox.Yes
 
-    def _isolation_ready(self, track: int, message: str = "Vocals isolated."):
+    def _isolation_ready(self, track: int, message: str = "Processed audio is ready."):
         for f in media.cache_dir(self.media_path).glob(f"export_a{track}_iso_*.pcm"):   # decodes of the previous version
             f.unlink(missing_ok=True)
         self.exporter.forget_audio()
         self._sync_isolated()
         self._load_isolated_wave()
-        self.statusBar().showMessage(f"{message} Switch a clip to Isolated in the clip editor (V).", 10000)
+        self.statusBar().showMessage(f"{message} Switch a clip to Processed in the clip editor (V).", 10000)
         if self.project.auto_export:   # clips that were waiting for the isolated audio
             self._auto_timer.start()
 
@@ -818,21 +843,21 @@ class MainWindow(QMainWindow):
             self._job_state.pop("isolation", None)
             self._refresh_job_label()
             if not quiet:
-                self.statusBar().showMessage("Isolation cancelled.", 5000)
+                self.statusBar().showMessage("Processing cancelled.", 5000)
 
     def choose_isolation_model(self):
         names = [f"{label}  [{file}]" for file, label in isolation.MODELS]
         current = next((i for i, (f, _l) in enumerate(isolation.MODELS) if f == isolation.model()), 0)
-        choice, ok = QInputDialog.getItem(self, "Isolation model", "Model used to separate the vocals:", names, current, False)
+        choice, ok = QInputDialog.getItem(self, "Processing model", "Model used to generate processed audio:", names, current, False)
         if ok:
             isolation.set_model(isolation.MODELS[names.index(choice)][0])
-            self.statusBar().showMessage("The model is used the next time you isolate (the first use downloads it).", 8000)
+            self.statusBar().showMessage("The model is used the next time you generate processed audio (the first use downloads it).", 8000)
 
     def remove_isolation(self):
         track = self.project.audio_track
         using = [c for c in self.project.clips if c.source == "isolated"]
-        if QMessageBox.question(self, "Remove isolated audio",
-                                "Delete the isolated audio for this track?" +
+        if QMessageBox.question(self, "Remove processed audio",
+                                "Delete the processed audio for this track?" +
                                 (f"\n\n{len(using)} clip(s) use it and will play and export the original audio instead."
                                  if using else "")) != QMessageBox.Yes:
             return
@@ -1121,8 +1146,8 @@ class MainWindow(QMainWindow):
             waiting = [c for c in targets if c.source == "isolated"]   # their audio is still being made
             if waiting:
                 targets = [c for c in targets if c not in waiting]
-                self.statusBar().showMessage(f"{len(waiting)} clip(s) use isolated audio and will export when the "
-                                             "isolation has finished.", 8000)
+                self.statusBar().showMessage(f"{len(waiting)} clip(s) use processed audio and will export when the "
+                                             "processing has finished.", 8000)
                 if not targets:
                     return
         self._confirm_moves(targets, s)
@@ -1130,7 +1155,7 @@ class MainWindow(QMainWindow):
         track = self.project.audio_track
         lost = [c for c in targets if c.source == "isolated" and not self.isolated_ready()]
         if lost:   # their isolated audio was removed or never made on this track
-            self.exporter.cancel_queued(lost, "This clip uses isolated audio, which is not there. Isolate the vocals "
+            self.exporter.cancel_queued(lost, "This clip uses processed audio, which is not there. Generate or import it "
                                               "again (Audio menu) or switch the clip to Original.")
             targets = [c for c in targets if c not in lost]
             if not targets:
