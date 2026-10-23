@@ -16,6 +16,5 @@ The first build takes a while (ffmpeg); later builds only redo what changed.
   stores/reads its own data in `~/.var/app/io.github.Lewin225.Snapper/{data,cache,config}`.
 - GPU through `--device=dri`; hardware decoding uses the host's NVIDIA GL extension (`auto-copy`, set in `snapper.sh`).
 - `org.freedesktop.FileManager1` is reachable, for "Open containing folder".
-- **Not included yet: the WhisperX engine** (see SPEC.md, "Flatpak"). "Generate using WhisperX" reports that the engine is
-  missing; subtitles from the video or an .srt file work.
+- **Optional engines (WhisperX, audio-separator) are not included**: the first use offers to install them for Snapper (network access is allowed for that, see SPEC.md, "Flatpak").
 - App id: `io.github.Lewin225.Snapper` (matches the GitHub account; change all four files if the repo moves).

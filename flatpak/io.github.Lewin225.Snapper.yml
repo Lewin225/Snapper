@@ -152,9 +152,11 @@ modules:
   - name: snapper
     buildsystem: simple
     build-commands:
-      # The package and the two backends sit side by side: the app finds them at ../speech_backend and ../isolation_backend
-      - mkdir -p /app/lib/snapper-app
-      - cp -r snapper speech_backend isolation_backend /app/lib/snapper-app/
+      # The same layout as the repository (app/snapper, speech_backend, isolation_backend): the app finds the two backends
+      # relative to its package
+      - mkdir -p /app/lib/snapper-app/app
+      - cp -r snapper /app/lib/snapper-app/app/
+      - cp -r speech_backend isolation_backend /app/lib/snapper-app/
       - find /app/lib/snapper-app -name __pycache__ -prune -exec rm -rf {} +
       - install -Dm755 snapper.sh /app/bin/snapper
       - install -Dm644 io.github.Lewin225.Snapper.desktop /app/share/applications/io.github.Lewin225.Snapper.desktop

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Starts Snapper inside the Flatpak sandbox.
-export PYTHONPATH=/app/lib/snapper-app${PYTHONPATH:+:$PYTHONPATH}
+export PYTHONPATH=/app/lib/snapper-app/app${PYTHONPATH:+:$PYTHONPATH}
 # The KDE colour scheme the base app shares from the host (xdg-config/kdeglobals:ro) is at the host's config path.
 if [ -z "$SNAPPER_KDEGLOBALS" ]; then
     for f in "${HOST_XDG_CONFIG_HOME:-}/kdeglobals" "$HOME/.config/kdeglobals" "$XDG_CONFIG_HOME/kdeglobals"; do
