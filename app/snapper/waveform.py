@@ -22,7 +22,7 @@ class WaveformWidget(QWidget):
     selection_edited = Signal(object, object)  # (in, out) after the user dragged a handle or clicked a word
     seek_requested = Signal(float)
     scrub_requested = Signal(float)   # the playhead is being dragged: show this moment (latest wins), the exact seek follows
-    scrubbing = Signal(bool)          # a playhead drag began (True) or ended (False, after its final seek_requested)
+    scrubbing = Signal(bool)          # a playhead drag began (True) or ended (False: go to `playhead`)
 
     def __init__(self):
         super().__init__()
@@ -297,8 +297,7 @@ class WaveformWidget(QWidget):
             if not p["moved"]:
                 self.seek_requested.emit(p["t0"])   # a click
             elif p["follow"]:
-                self.seek_requested.emit(self.playhead)   # the exact moment where the drag ended
-                self.scrubbing.emit(False)
+                self.scrubbing.emit(False)   # the host goes to the exact moment where the drag ended
         self.unsetCursor()
         self._drag = self._frozen = None
         self.update()

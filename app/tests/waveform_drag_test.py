@@ -71,20 +71,32 @@ win.player.seek(100.0)
 win.player.mpv.pause = False
 QTest.qWait(1200)
 assert not win.player.paused
+import time
 press(x0); move.last = x0
-move(x0 - 60)
+t0 = time.perf_counter()
+for i in range(1, 121):                            # a steady drag, one pixel per event
+    move(x0 - i, steps=1)
+    QTest.qWait(8)
+took = time.perf_counter() - t0
+assert took < 3.0, f"the window must not block on every seek ({took:.1f} s for 120 mouse moves)"
+move(x0 - 120, steps=1)
 assert not win.player.paused, "still playing while the mouse moves: that is the scrub audio"
 QTest.qWait(500)                                   # the mouse does not move
 assert win.player.paused, "held when the mouse is still"
 hold_from = win.player.pos
 QTest.qWait(1200)
 assert abs(win.player.pos - hold_from) < 0.15 and abs(wave.playhead - hold_from) < 0.3, (win.player.pos, hold_from, wave.playhead)
+assert abs(win.player.now() - wave.playhead) < 0.05, ("held exactly at the cursor", win.player.now(), wave.playhead)
 move(x0 - 90, steps=3)                             # moving again plays on from there
+QTest.qWait(60)
 assert not win.player.paused
 QTest.qWait(500)
 assert win.player.paused
+at_release = wave.playhead
 release(x0 - 90)
-QTest.qWait(800)
+QTest.qWait(250)
+assert abs(win.player.now() - at_release) < 0.45, ("playing on from the release point", win.player.now(), at_release)
+QTest.qWait(550)
 assert not win.player.paused and win.player.pos > hold_from + 0.3, "it was playing before the drag, so it plays on after"
 assert "Pause" in win.btn_play.text()
 win.player.mpv.pause = True

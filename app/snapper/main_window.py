@@ -87,6 +87,7 @@ class MainWindow(QMainWindow):
         self._smooth = False
         self._scrubbing = False               # the waveform's playhead is being dragged
         self._scrub_resume = False            # ... while playback was running
+        self._scrub_held = False              # ... and it is stopped for now because the mouse is still
         self._scrub_idle = QTimer(self, singleShot=True, interval=SCRUB_HOLD_MS, timeout=self._scrub_hold)
         self._pos_t = self._shown = 0.0       # the last position mpv reported, and the playhead as drawn
         self._pos_wall = time.monotonic()     # when it was reported
@@ -991,11 +992,13 @@ class MainWindow(QMainWindow):
         gives the scrub audio, holds as soon as the mouse is still (see _wave_scrub), and goes on from where the drag
         ended."""
         self._scrubbing = on
+        self._scrub_held = False
         if on:
             self._scrub_resume = not self.player.paused
             self._scrub_idle.start()
         else:
             self._scrub_idle.stop()
+            self.player.settle(self.editor.wave.playhead)   # exactly where the drag ended, before playing on
             if self._scrub_resume:
                 self.player.mpv.pause = False
             self._scrub_resume = False
@@ -1004,13 +1007,17 @@ class MainWindow(QMainWindow):
     def _wave_scrub(self, t: float):
         self.player.scrub(t)
         if self._scrub_resume:
-            self.player.mpv.pause = False   # moving again after a hold: play on from here (the scrub audio)
+            if self._scrub_held:            # moving again after a hold: play on from here (the scrub audio)
+                self._scrub_held = False
+                self.player.mpv.pause = False
             self._scrub_idle.start()
 
     def _scrub_hold(self):
         """The mouse has been still for a moment during a drag: stop where the playhead is."""
-        if self._scrubbing and self._scrub_resume:
+        if self._scrubbing and self._scrub_resume and not self._scrub_held:
+            self._scrub_held = True
             self.player.mpv.pause = True
+            self.player.settle(self.editor.wave.playhead)   # what is shown and heard is exactly where the cursor stopped
 
     def on_wave_edited(self, a, b):
         self.set_range(a, b)

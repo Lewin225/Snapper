@@ -158,12 +158,15 @@ class Player(QObject):
         return t if t is not None else self.pos
 
     # --- transport
-    def seek(self, t: float, exact: bool = True):
+    def seek(self, t: float, exact: bool = True, block: bool = True):
+        """`block=False` hands the seek to mpv and returns at once. A blocking seek can take 100 ms or more (more while
+        the audio restarts), which freezes the whole window; dragging uses the non-blocking one."""
         if not self._loaded:
             self._queued_seek = (t, exact)  # applied when the file finishes loading
             return
+        args = ("seek", min(max(0.0, t), self.duration), "absolute+" + ("exact" if exact else "keyframes"))
         try:
-            self.mpv.command("seek", min(max(0.0, t), self.duration), "absolute+" + ("exact" if exact else "keyframes"))
+            (self.mpv.command if block else self.mpv.command_async)(*args)
         except SystemError as e:  # mpv rejects seeks during file transitions; never crash the UI for it
             print(f"[player] seek to {t:.2f} rejected: {e}", flush=True)
 
@@ -179,11 +182,16 @@ class Player(QObject):
         if not self._inflight:
             self._issue()
 
+    def settle(self, t: float):
+        """The end of a scrub: forget any scrub position still waiting and go to exactly `t`."""
+        self._pending = None
+        self.seek(t, exact=True, block=False)
+
     def _issue(self):
         t, self._pending = self._pending, None
         if t is not None:
             self._inflight = True
-            self.seek(t, exact=False)
+            self.seek(t, exact=False, block=False)
 
     def _on_restart(self):
         self._inflight = False
