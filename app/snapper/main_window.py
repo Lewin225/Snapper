@@ -1005,7 +1005,7 @@ class MainWindow(QMainWindow):
             self._paused_changed(self.player.paused)
 
     def _wave_scrub(self, t: float):
-        self.player.scrub(t)
+        self.player.scrub(t, exact=True)   # the frame under the cursor, not the nearest keyframe
         if self._scrub_resume:
             if self._scrub_held:            # moving again after a hold: play on from here (the scrub audio)
                 self._scrub_held = False

@@ -176,9 +176,11 @@ class Player(QObject):
             self._queued_seek = None
             self.seek(t, exact)
 
-    def scrub(self, t: float):
-        """Latest wins: only the newest target is kept, so seeks never queue up behind the cursor."""
-        self._pending = t
+    def scrub(self, t: float, exact: bool = False):
+        """Latest wins: only the newest target is kept, so seeks never queue up behind the cursor. `exact` seeks to the
+        frame at `t`; otherwise to the nearest keyframe, which is quicker but, in the original video, can be seconds away
+        (the frame only changes at camera cuts). The scrub proxy has a keyframe on every frame, so there it is the same."""
+        self._pending = (t, exact)
         if not self._inflight:
             self._issue()
 
@@ -188,10 +190,10 @@ class Player(QObject):
         self.seek(t, exact=True, block=False)
 
     def _issue(self):
-        t, self._pending = self._pending, None
-        if t is not None:
+        target, self._pending = self._pending, None
+        if target is not None:
             self._inflight = True
-            self.seek(t, exact=False, block=False)
+            self.seek(target[0], exact=target[1], block=False)
 
     def _on_restart(self):
         self._inflight = False

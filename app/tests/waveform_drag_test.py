@@ -72,6 +72,9 @@ win.player.mpv.pause = False
 QTest.qWait(1200)
 assert not win.player.paused
 import time
+issued = []
+real_seek = win.player.seek
+win.player.seek = lambda t, exact=True, block=True: (issued.append(exact), real_seek(t, exact, block))[1]
 press(x0); move.last = x0
 t0 = time.perf_counter()
 for i in range(1, 121):                            # a steady drag, one pixel per event
@@ -80,6 +83,8 @@ for i in range(1, 121):                            # a steady drag, one pixel pe
 took = time.perf_counter() - t0
 assert took < 3.0, f"the window must not block on every seek ({took:.1f} s for 120 mouse moves)"
 move(x0 - 120, steps=1)
+assert issued and all(issued), "dragging seeks to the frame under the cursor, not to a keyframe"
+win.player.seek = real_seek
 assert not win.player.paused, "still playing while the mouse moves: that is the scrub audio"
 QTest.qWait(500)                                   # the mouse does not move
 assert win.player.paused, "held when the mouse is still"
