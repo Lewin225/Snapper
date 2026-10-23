@@ -14,3 +14,6 @@ app/tests/media/tears_of_steel.mp4
 
 # editor/agent tooling
 .serena/
+build/
+*.egg-info/
+dist/

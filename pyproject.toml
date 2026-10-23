@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "snapper"
+version = "1.0.0"
+description = "Bulk-cut spoken lines from TV episodes by hand, with transcripts, tags and export"
+readme = "README.md"
+license = { text = "AGPL-3.0-or-later" }
+requires-python = ">=3.10"
+dependencies = [
+    "PySide6>=6.6",
+    "python-mpv>=1.0.5",
+    "numpy>=1.26",
+]
+classifiers = [
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Multimedia :: Sound/Audio",
+]
+
+[project.urls]
+Homepage = "https://github.com/Lewin225/Snapper"
+Issues = "https://github.com/Lewin225/Snapper/issues"
+
+[project.scripts]
+snapper = "snapper.__main__:main"
+
+# Also installed: the two engine backends (plain scripts that run in the engines' own Python environments, not imported by the
+# app). They end up next to the snapper package, where the app looks for them.
+[tool.setuptools]
+packages = ["snapper", "speech_backend", "isolation_backend"]
+
+[tool.setuptools.package-dir]
+snapper = "app/snapper"
+speech_backend = "speech_backend"
+isolation_backend = "isolation_backend"

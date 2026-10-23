@@ -13,5 +13,5 @@
   <url type="bugtracker">https://github.com/Lewin225/Snapper/issues</url>
   <developer id="io.github.lewin225"><name>Lewin225</name></developer>
   <content_rating type="oars-1.1"/>
-  <releases><release version="0.1.0" date="2026-10-20"/></releases>
+  <releases><release version="1.0.0" date="2026-10-23"/></releases>
 </component>

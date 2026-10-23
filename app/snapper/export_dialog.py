@@ -6,12 +6,13 @@ from typing import Optional
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QGridLayout, QGroupBox, QHBoxLayout,
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QMessageBox, QFileDialog, QFormLayout, QGridLayout, QGroupBox, QHBoxLayout,
                                QLabel, QLineEdit, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout,
                                QWidget)
 
 from .export import (DEFAULT_TEMPLATE, FORMATS, SAMPLE_RATES, TOKENS, MP3_QUALITIES, WAV_BIT_DEPTHS, WAV_TEXT_FIELDS, ExportSettings,
                      output_dir_problem, plan_files, template_problem)
+from . import system_check
 from .model import Project
 
 FORMAT_LABELS = {"wav": "WAV", "mp3": "MP3"}
@@ -141,6 +142,7 @@ class ExportSettingsDialog(QDialog):
         self.folder_list.itemChanged.connect(self._refresh)
         self.folder_list.model().rowsMoved.connect(self._refresh)
         self.format.currentIndexChanged.connect(self._format_changed)
+        self.format.activated.connect(self._format_picked)
         self._build_placeholders()
         self._load(cur)
 
@@ -207,6 +209,13 @@ class ExportSettingsDialog(QDialog):
         self.embed_tags.setToolTip("Written as JSON in a custom 'snpr' " + (
             "chunk of the WAV file." if fmt == "wav" else "text frame (TXXX) of the MP3's ID3 tag."))
         self._refresh()   # the example file name shows the format's extension
+        missing = fmt == "mp3" and not system_check.has_encoder("libmp3lame")
+        self.format.setToolTip(system_check.missing_encoder_text("libmp3lame") if missing else "")
+
+    def _format_picked(self, *_):
+        """The user chose a format (not the dialog filling in the saved one): say now if this ffmpeg cannot write it."""
+        if self.format.currentData() == "mp3" and not system_check.has_encoder("libmp3lame"):
+            QMessageBox.warning(self, "MP3", system_check.missing_encoder_text("libmp3lame") + "\n\nWAV export still works.")
 
     # --- values
     def _set(self, combo: QComboBox, data):

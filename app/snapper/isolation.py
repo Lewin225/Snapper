@@ -9,9 +9,9 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QProcess, QSettings, Signal
 
-from . import media
+from . import media, system_check
 
-ISOLATION_BACKEND_DIR = Path(__file__).resolve().parents[2] / "isolation_backend"
+ISOLATION_BACKEND_DIR = system_check.backend_dir("isolation_backend")
 
 # (file name, what to tell the user). The first is the default: the best-scoring vocal separator audio-separator offers.
 MODELS = [

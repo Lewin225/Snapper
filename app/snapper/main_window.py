@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox, QDialo
                                QFormLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QPushButton, QSlider,
                                QSplitter, QTextEdit, QVBoxLayout, QWidget)
 
-from . import media
+from . import media, system_check
 from . import export as exporting
 from .export_dialog import ExportSettingsDialog
 from .pathnames import INVALID_HELP, VALID_INPUT_PATTERN, clean_tag
@@ -393,7 +393,9 @@ class MainWindow(QMainWindow):
         else:
             self._load_video(str(self.media_path), HWDEC, start, paused)
             self._on_proxy = False
-            if self.project.proxy_enabled and not self._proxy_job:
+            if self.project.proxy_enabled and not self._proxy_job and not system_check.has_encoder("libx264"):
+                self.statusBar().showMessage(system_check.missing_encoder_text("libx264") + "Scrubbing uses the original video.", 15000)
+            elif self.project.proxy_enabled and not self._proxy_job:
                 self._proxy_job = media.proxy_job(self.media_path, self.info.duration)
                 self.proxy_banner.generating(0.0)
                 self._run_job(self._proxy_job, "proxy", self._proxy_ready)
@@ -1152,6 +1154,11 @@ class MainWindow(QMainWindow):
         background, the library shows each clip's state, and more can be queued while it runs."""
         s = self._export_settings()
         if s is None or not self.project.clips:
+            return
+        if s.format == "mp3" and not system_check.has_encoder("libmp3lame"):
+            if not auto:
+                QMessageBox.warning(self, "Export", system_check.missing_encoder_text("libmp3lame") +
+                                    "\n\nOpen Export Settings and choose WAV instead.")
             return
         if (problem := exporting.output_dir_problem(s.output_dir)) and not auto:
             QMessageBox.warning(self, "Export", problem + "\nOpen Export Settings to choose a folder.")

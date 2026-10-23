@@ -19,9 +19,21 @@ Flatpak (from a release bundle):
     flatpak install --user Snapper.flatpak
     flatpak run io.github.Lewin225.Snapper
 
-From source (Linux; other platforms are not tested):
+Without Flatpak, with pip or pipx (Linux; other platforms are not tested). Snapper uses your system's **libmpv** and **ffmpeg**
+(with the `libx264` and `libmp3lame` encoders, for the scrub proxy and MP3 export; stock Fedora ffmpeg lacks them, install
+ffmpeg from [RPM Fusion](https://rpmfusion.org)). Install those first, for example:
 
-    pip install -r app/requirements.txt     # PySide6, python-mpv, numpy; also needs libmpv and ffmpeg installed
+    sudo dnf install mpv-libs ffmpeg        # Fedora        (Debian/Ubuntu: sudo apt install libmpv2 ffmpeg)
+    pipx install https://github.com/Lewin225/Snapper/releases/download/v1.0.0/snapper-1.0.0-py3-none-any.whl
+    snapper [video-or-project]
+
+If libmpv or ffmpeg is missing, Snapper says so at start and shows the command for your distribution. A missing encoder is
+reported only when you use the feature that needs it (the scrub proxy falls back to the original video; MP3 export asks you to
+pick WAV or fix ffmpeg).
+
+From a checkout:
+
+    pip install -r app/requirements.txt     # PySide6, python-mpv, numpy
     ./run.sh [video-or-project]
 
 With no argument Snapper shows a start screen with your recent projects. Opening a video asks whether to resume its

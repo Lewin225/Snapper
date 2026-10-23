@@ -13,9 +13,10 @@ from PySide6.QtCore import QObject, QProcess, Qt, QTimer, Signal
 from PySide6.QtWidgets import (QAbstractItemView, QHeaderView, QLabel, QLineEdit, QMenu, QProgressBar, QPushButton, QStackedLayout,
                                QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
+from . import system_check
 from .titles import section_title
 
-SPEECH_BACKEND_DIR = Path(__file__).resolve().parents[2] / "speech_backend"
+SPEECH_BACKEND_DIR = system_check.backend_dir("speech_backend")
 
 
 class Transcript:
