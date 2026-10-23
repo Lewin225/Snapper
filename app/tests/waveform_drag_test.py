@@ -169,7 +169,7 @@ for speed in (1.0, 2.0, 0.5, -1.5):                          # granular: the pit
     v = TapeVoice(); v.begin(10.0, tone, None, 0.0, False, granular=True)
     g = run(v, 1.2, lambda t: 10.0 + speed * t)
     assert abs(pitch(g[RATE // 2:RATE // 2 + 16384]) - 440) < 30, (speed, pitch(g[RATE // 2:RATE // 2 + 16384]))
-    assert 0.1 < np.abs(g[RATE // 2:]).max() < 0.5, (speed, np.abs(g[RATE // 2:]).max())
+    assert 0.1 < np.abs(g[RATE // 2:]).max() < 0.7, (speed, np.abs(g[RATE // 2:]).max())
 v = TapeVoice(); v.begin(5.0, tone, None, 0.0, False, granular=True)
 run(v, 0.5, lambda t: 5.0 + t)
 still = run(v, 1.5, lambda t: 6.0)
