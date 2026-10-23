@@ -64,6 +64,7 @@ class KeyFilter(QObject):
         return self.win.handle_key(ev)
 
 
+SCRUB_HOLD_MS = 120   # a playhead drag that has not moved for this long stops playback where it is
 FALLBACK_MARGIN = 1.0   # seconds before the end of the isolated part at which playback returns to the original
 
 
@@ -84,6 +85,9 @@ class MainWindow(QMainWindow):
         self.pending = Clip()          # the new clip being cut; tags stay set between clips
         self.jobs: list = []
         self._smooth = False
+        self._scrubbing = False               # the waveform's playhead is being dragged
+        self._scrub_resume = False            # ... while playback was running
+        self._scrub_idle = QTimer(self, singleShot=True, interval=SCRUB_HOLD_MS, timeout=self._scrub_hold)
         self._pos_t = self._shown = 0.0       # the last position mpv reported, and the playhead as drawn
         self._pos_wall = time.monotonic()     # when it was reported
         self._glide = QTimer(self, timerType=Qt.PreciseTimer, timeout=self._glide_tick)
@@ -189,7 +193,8 @@ class MainWindow(QMainWindow):
         self.audio_combo.currentIndexChanged.connect(self.set_audio_track)
         self.editor.wave.word_source = lambda a, b: self.transcript().words_between(a, b)
         self.editor.wave.seek_requested.connect(lambda t: self.player.seek(t))
-        self.editor.wave.scrub_requested.connect(self.player.scrub)
+        self.editor.wave.scrub_requested.connect(self._wave_scrub)
+        self.editor.wave.scrubbing.connect(self._wave_scrubbing)
         self.editor.wave.selection_edited.connect(self.on_wave_edited)
         self.editor.range_edited.connect(self.on_wave_edited)
         self.editor.preview_requested.connect(self.player.scrub)
@@ -981,6 +986,32 @@ class MainWindow(QMainWindow):
             self.project.touch(c)
         self.editor.refresh_values()
 
+    def _wave_scrubbing(self, on: bool):
+        """A playhead drag began or ended. If playback was running it keeps going while the mouse moves, which is what
+        gives the scrub audio, holds as soon as the mouse is still (see _wave_scrub), and goes on from where the drag
+        ended."""
+        self._scrubbing = on
+        if on:
+            self._scrub_resume = not self.player.paused
+            self._scrub_idle.start()
+        else:
+            self._scrub_idle.stop()
+            if self._scrub_resume:
+                self.player.mpv.pause = False
+            self._scrub_resume = False
+            self._paused_changed(self.player.paused)
+
+    def _wave_scrub(self, t: float):
+        self.player.scrub(t)
+        if self._scrub_resume:
+            self.player.mpv.pause = False   # moving again after a hold: play on from here (the scrub audio)
+            self._scrub_idle.start()
+
+    def _scrub_hold(self):
+        """The mouse has been still for a moment during a drag: stop where the playhead is."""
+        if self._scrubbing and self._scrub_resume:
+            self.player.mpv.pause = True
+
     def on_wave_edited(self, a, b):
         self.set_range(a, b)
 
@@ -1334,6 +1365,8 @@ class MainWindow(QMainWindow):
         self.update_time_label()
 
     def _paused_changed(self, paused: bool):
+        if self._scrubbing:   # the drag starts and stops playback itself: no flicker of the button, the glide timer or the playhead
+            return
         self._pos_t, self._pos_wall, self._shown = self.player.pos, time.monotonic(), self.player.pos
         self._glide_check()
         self.btn_play.setText("▶ Play" if paused else "❚❚ Pause")

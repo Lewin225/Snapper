@@ -66,6 +66,40 @@ QTest.qWait(600)
 assert abs(win.player.pos - mid) < 0.3 and abs(wave.playhead - win.player.pos) < 0.3, (win.player.pos, mid)
 print("ok   no clip selected: dragging the waveform scrubs the playhead under the timeline")
 
+# --- while playing: it plays (the scrub audio) as the mouse moves, holds when the mouse is still, plays on when let go
+win.player.seek(100.0)
+win.player.mpv.pause = False
+QTest.qWait(1200)
+assert not win.player.paused
+press(x0); move.last = x0
+move(x0 - 60)
+assert not win.player.paused, "still playing while the mouse moves: that is the scrub audio"
+QTest.qWait(500)                                   # the mouse does not move
+assert win.player.paused, "held when the mouse is still"
+hold_from = win.player.pos
+QTest.qWait(1200)
+assert abs(win.player.pos - hold_from) < 0.15 and abs(wave.playhead - hold_from) < 0.3, (win.player.pos, hold_from, wave.playhead)
+move(x0 - 90, steps=3)                             # moving again plays on from there
+assert not win.player.paused
+QTest.qWait(500)
+assert win.player.paused
+release(x0 - 90)
+QTest.qWait(800)
+assert not win.player.paused and win.player.pos > hold_from + 0.3, "it was playing before the drag, so it plays on after"
+assert "Pause" in win.btn_play.text()
+win.player.mpv.pause = True
+QTest.qWait(300)
+print("ok   dragging while playing: plays while the mouse moves, holds still when it stops, plays on when let go")
+# and a drag that starts paused leaves it paused
+win.player.seek(100.0)
+QTest.qWait(500)
+press(x0); move.last = x0
+move(x0 + 40)
+release(x0 + 40)
+QTest.qWait(600)
+assert win.player.paused
+print("ok   a drag that started paused leaves it paused")
+
 # --- a click still moves the playhead
 t_click = wave._t(x0 + 150, *wave.view())
 press(x0 + 150); release(x0 + 150)
