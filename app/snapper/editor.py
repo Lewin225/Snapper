@@ -5,8 +5,8 @@ from typing import Optional
 
 from PySide6.QtCore import QRegularExpression, Qt, Signal
 from PySide6.QtGui import QRegularExpressionValidator
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QSizePolicy,
-                               QSpinBox, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton,
+                               QSizePolicy, QSpinBox, QVBoxLayout, QWidget)
 
 from .model import BOOL, INT, STRING, Clip, Project
 from .pathnames import INVALID_HELP, VALID_INPUT_PATTERN, clean_tag
@@ -31,6 +31,7 @@ class ClipEditor(QWidget):
     preview_requested = Signal(float)    # a marker is being dragged: show that moment in the video
     save_requested = Signal()
     deselect_requested = Signal()
+    source_requested = Signal(str)       # the user chose "original" or "isolated" audio for this clip
 
     def __init__(self, project: Project):
         super().__init__()
@@ -67,6 +68,16 @@ class ClipEditor(QWidget):
             b.setFocusPolicy(Qt.NoFocus)
         self.deselect_btn.clicked.connect(self.deselect_requested)
         self.save_btn.clicked.connect(self.save_requested)
+        self.source_btns = {"original": QPushButton("Original"), "isolated": QPushButton("Isolated")}
+        self.source_group = QButtonGroup(self)
+        self.source_group.setExclusive(True)
+        for name, b in self.source_btns.items():
+            b.setCheckable(True)
+            b.setFocusPolicy(Qt.NoFocus)
+            self.source_group.addButton(b)
+            b.clicked.connect(lambda _c=False, name=name: self.source_requested.emit(name))
+        self.source_btns["original"].setChecked(True)
+        self.show_source("original", False)
         self.hint = QLabel()
         self.hint.setStyleSheet("color: gray;")
         self.hint.setWordWrap(True)
@@ -84,6 +95,13 @@ class ClipEditor(QWidget):
         clip_buttons.addWidget(self.play_btn)
         clip_buttons.addWidget(self.deselect_btn)
         left.addLayout(clip_buttons)
+        source_row = QHBoxLayout()     # which audio the clip is cut from (and heard and exported)
+        source_row.setSpacing(0)
+        source_row.addWidget(QLabel("Audio  "))
+        source_row.addWidget(self.source_btns["original"])
+        source_row.addWidget(self.source_btns["isolated"])
+        source_row.addStretch(1)
+        left.addLayout(source_row)
         marks.addLayout(left)
         marks.addStretch(1)
         marks.addWidget(self.scrub_in)
@@ -206,6 +224,21 @@ class ClipEditor(QWidget):
             self.save_btn.setText("Save to Library (Enter)")
         self.save_btn.setEnabled(c.start is not None and c.end is not None)
         self.deselect_btn.setEnabled(c.start is not None or c.id is not None)
+
+    def show_source(self, source: str, available: bool):
+        """Shows which audio the clip uses; `available` says whether isolated audio exists for this episode."""
+        for name, b in self.source_btns.items():
+            b.setChecked(name == source)
+        iso = self.source_btns["isolated"]
+        if source == "isolated" and not available:
+            iso.setToolTip("This clip uses isolated audio, but it is no longer there. It plays and exports the original "
+                           "until you isolate the vocals again (Audio menu).")
+            iso.setStyleSheet("color: palette(link);")
+        else:
+            iso.setToolTip("Only the dialogue, with music and effects removed (V switches)." if available else
+                           "No isolated audio yet. Click to isolate the vocals with audio-separator.")
+            iso.setStyleSheet("")
+        self.source_btns["original"].setToolTip("The episode's own audio (V switches).")
 
     def _set_status(self, what: str):
         self.status.setText(f"Clip Editor — {what}")

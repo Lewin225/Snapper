@@ -30,6 +30,7 @@ class Clip:
     id: Optional[int] = None
     export_sig: Optional[str] = None   # what was last exported for this clip (see export.export_signature) ...
     export_path: Optional[str] = None  # ... and where the file went
+    source: str = "original"           # which audio the clip is cut from: "original", or "isolated" (dialogue only)
 
     @property
     def duration(self) -> float:
@@ -38,12 +39,13 @@ class Clip:
     def to_json(self) -> dict:
         return {"id": self.id, "start": self.start, "end": self.end, "text": self.text,
                 "text_auto": self.text_auto, "tags": self.tags,
-                "export_sig": self.export_sig, "export_path": self.export_path}
+                "export_sig": self.export_sig, "export_path": self.export_path, "source": self.source}
 
     @staticmethod
     def from_json(d: dict) -> "Clip":
         return Clip(d["start"], d["end"], d.get("text", ""), d.get("text_auto", True),
-                    dict(d.get("tags", {})), d["id"], d.get("export_sig"), d.get("export_path"))
+                    dict(d.get("tags", {})), d["id"], d.get("export_sig"), d.get("export_path"),
+                    d.get("source", "original"))
 
 
 class Project(QObject):

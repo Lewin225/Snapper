@@ -35,6 +35,11 @@ class Player(QObject):
         self._pending: Optional[float] = None
         self._loaded = False
         self._aid = 1  # mpv audio track id (1-based)
+        self._iso: Optional[str] = None     # the isolated-dialogue audio file, added to the video as one more audio track
+        self._n_audio = 0                   # how many audio tracks the video has itself (the isolated one comes after them)
+        self._iso_aid = 1                   # its mpv track id
+        self._want_iso = False              # whether that extra track is the one to hear
+        self._iso_loaded = False            # whether the current file has it
         self._queued_seek: Optional[tuple[float, bool]] = None  # seek asked for while a file was loading
         self._inflight = False
         self._end: Optional[float] = None
@@ -60,15 +65,12 @@ class Player(QObject):
         @self.mpv.event_callback("start-file")
         def _sf(_e):
             self._loaded = False
+            self._iso_loaded = self._iso is not None   # a new file is opened with the extra track (see _do_load)
 
         @self.mpv.event_callback("file-loaded")
         def _fl(_e):
             self._loaded = True
-            if self._aid != 1:  # a new file starts on the first track; only re-apply a different choice
-                try:
-                    self.mpv.aid = self._aid
-                except Exception:
-                    pass
+            self._apply_audio()
             self.loaded_signal.emit()
 
         @self.mpv.event_callback("playback-restart")
@@ -82,7 +84,47 @@ class Player(QObject):
         """Chooses which audio track is heard (0-based, in file order)."""
         self._aid = index + 1
         if self._loaded:
-            self.mpv.aid = self._aid
+            self._apply_audio()
+
+    def _apply_audio(self):
+        """Selects the track to hear: the isolated one when wanted and present, else the chosen original."""
+        aid = self._iso_aid if self._want_iso and self._iso_loaded else self._aid
+        if aid == 1 and not self._loaded:
+            return
+        try:
+            self.mpv.aid = aid
+        except Exception:
+            pass
+
+    def set_isolated(self, path: Optional[str], n_audio: int) -> bool:
+        """Makes the isolated-dialogue audio (a WAV the same length as the video) available as one more audio track,
+        or removes it (None). `n_audio` is how many audio tracks the video itself has. Returns True when the video
+        has to be loaded again to drop or replace an extra track it already has."""
+        changed = path != self._iso
+        had = self._iso_loaded
+        self._iso, self._n_audio = path, n_audio
+        self._iso_aid = n_audio + 1
+        if path is None:
+            self._want_iso = False
+        if not (changed and self._loaded):
+            return False
+        if had:
+            self._iso_loaded = False   # mpv cannot drop a track: the caller reloads the file
+            return True
+        if path is not None:
+            try:
+                self.mpv.command("audio-add", path, "auto")
+                self._iso_loaded = True
+            except Exception as e:
+                print(f"[player] could not add the isolated audio: {e}", flush=True)
+        self._apply_audio()
+        return False
+
+    def use_isolated(self, on: bool):
+        """Hears the isolated dialogue (True) or the original audio (False)."""
+        self._want_iso = on and self._iso is not None
+        if self._loaded:
+            self._apply_audio()
 
     # --- loading
     def load(self, path: str, hwdec: str, start: float = 0.0, pause: bool = True):
@@ -100,7 +142,8 @@ class Player(QObject):
     def _do_load(self):
         path, hwdec, start, pause = self._file
         self.mpv["hwdec"] = hwdec
-        self.mpv.loadfile(path, "replace", start=f"{start:.3f}", pause="yes" if pause else "no")
+        opts = {"audio_files": self._iso} if self._iso else {}   # the isolated audio rides along as an extra track
+        self.mpv.loadfile(path, "replace", start=f"{start:.3f}", pause="yes" if pause else "no", **opts)
 
     def now(self) -> float:
         """The playback position straight from mpv. `pos` is fed by an asynchronous event and can lag a moment

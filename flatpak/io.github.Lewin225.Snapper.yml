@@ -17,7 +17,7 @@ finish-args:
   - --device=dri                      # GPU: video rendering and (with the host's NVIDIA GL extension) NVDEC
   - --socket=pulseaudio               # mpv's audio (PipeWire's PulseAudio socket)
   - --talk-name=org.freedesktop.FileManager1   # "Open containing folder" with the file selected
-  - --share=network                   # only for installing WhisperX (when asked to) and downloading its speech model
+  - --share=network                   # only for installing WhisperX / audio-separator (when asked to) and downloading their models
   # No filesystem access: videos and export folders are chosen through the file-chooser portal.
   # (The KDE colours come from the base app's xdg-config/kdeglobals:ro.)
 
@@ -152,9 +152,9 @@ modules:
   - name: snapper
     buildsystem: simple
     build-commands:
-      # The package and the speech backend sit side by side: the app finds the backend at ../speech_backend
+      # The package and the two backends sit side by side: the app finds them at ../speech_backend and ../isolation_backend
       - mkdir -p /app/lib/snapper-app
-      - cp -r snapper speech_backend /app/lib/snapper-app/
+      - cp -r snapper speech_backend isolation_backend /app/lib/snapper-app/
       - find /app/lib/snapper-app -name __pycache__ -prune -exec rm -rf {} +
       - install -Dm755 snapper.sh /app/bin/snapper
       - install -Dm644 io.github.Lewin225.Snapper.desktop /app/share/applications/io.github.Lewin225.Snapper.desktop
@@ -167,6 +167,9 @@ modules:
       - type: dir
         path: ../speech_backend
         dest: speech_backend
+      - type: dir
+        path: ../isolation_backend
+        dest: isolation_backend
       - type: dir
         path: .
         skip: [io.github.Lewin225.Snapper.yml]

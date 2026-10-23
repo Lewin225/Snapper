@@ -162,6 +162,8 @@ def export_signature(clip: Clip, settings: ExportSettings, track: int) -> str:
     payload = {"start": clip.start, "end": clip.end, "track": track, "settings": settings.to_json(),
                "text": clip.text if settings.text_field else None,
                "tags": clip.tags if (settings.embed_tags or settings.folder_tags or "{" in settings.name_template) else None}
+    if clip.source != "original":   # absent for the original, so signatures made before isolation existed stay valid
+        payload["source"] = clip.source
     return hashlib.sha1(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()[:16]
 
 
@@ -398,6 +400,11 @@ class ExportManager(QObject):
             self._settings = (id(d), ExportSettings.from_json(d))
         return self._settings[1]
 
+    def forget_audio(self):
+        """Drops the decoded audio the writer holds open (the isolated audio may have just been replaced on disk)."""
+        if self._worker is not None and not self.busy():
+            self._worker._pcm.clear()
+
     def current_signature(self, clip: Clip) -> Optional[str]:
         s = self.settings()
         if s is None:
@@ -455,8 +462,11 @@ class ExportManager(QObject):
         self._batch_done += len(clips)
         self._check_idle()
 
-    def submit(self, clips: list[Clip], settings: ExportSettings, pcm_path: Path):
-        """Queues clips (already marked queued) for writing. `pcm_path` is the decoded audio matching `settings`."""
+    def submit(self, clips: list[Clip], settings: ExportSettings, pcm_paths):
+        """Queues clips (already marked queued) for writing. `pcm_paths` maps each audio source ("original",
+        "isolated") to its decoded audio matching `settings`; a single path stands for the original only."""
+        if not isinstance(pcm_paths, dict):
+            pcm_paths = {"original": pcm_paths}
         if self._worker is None:
             self._worker = _Worker(self)
             self._worker.started_clip.connect(self._on_started)
@@ -467,7 +477,7 @@ class ExportManager(QObject):
         for c in clips:
             snap = replace(c, tags=dict(c.tags))   # the clip may be edited while it waits
             self._sigs_at_submit[c.id] = export_signature(c, settings, self.project.audio_track)
-            self._worker.jobs.put((snap, plan[c.id], kinds, settings, str(pcm_path), c.export_path,
+            self._worker.jobs.put((snap, plan[c.id], kinds, settings, str(pcm_paths[c.source]), c.export_path,
                                    self._old_root(c.id, c.export_path, settings)))
 
     # The user's answer about a clip's old file, until that clip has been exported again: True = delete it once the new

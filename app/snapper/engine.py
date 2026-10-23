@@ -1,8 +1,9 @@
-"""The WhisperX engine: which Python environment runs it, what is missing from it, and installing one just for Snapper.
+"""Optional engines (WhisperX for transcripts, audio-separator for vocal isolation): which Python runs each one, what is
+missing from it, and installing it either into the system Python or into a private environment just for Snapper.
 
-WhisperX needs PyTorch and friends (several GB), so it lives in its own environment rather than in the app. Snapper looks
-for one in this order: the one the user chose, SNAPPER_WX_PYTHON, the developer's ~/envs/wx, and the one Snapper installs
-itself under its data folder."""
+An engine is a set of Python packages (PyTorch and friends are several GB), so it lives outside the app. For each engine
+Snapper looks for a Python in this order: the one the user chose, the one named by the engine's environment variable, the
+developer's own environment, the private one Snapper installs under its data folder, and the system Python."""
 from __future__ import annotations
 
 import json
@@ -18,21 +19,94 @@ from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QSettings, Si
 
 from . import media
 
-REQUIRED = os.environ.get("SNAPPER_ENGINE_REQUIRED", "whisperx torch torchaudio").split()   # importable module names
-PACKAGES = os.environ.get("SNAPPER_ENGINE_PACKAGES", "whisperx==3.8.6 torch==2.8.0 torchaudio==2.8.0").split()
-ENGINE_DIR = media.DATA_ROOT / "engines" / "whisperx"
-MIN_FREE_GB = 12            # the environment (about 7 GB) plus pip's downloads
 IN_FLATPAK = Path("/.flatpak-info").exists()
+
+
+@dataclass
+class Engine:
+    key: str                         # settings / folder name
+    title: str                       # shown to the user
+    modules: dict[str, str]          # importable module -> the name shown in the checklist
+    gpu_packages: list[str]          # pip requirements for a GPU install (installed together)
+    cpu_packages: list[str]          # ... for a CPU-only install
+    cpu_pip_args: list[str]          # extra pip arguments for the CPU install (e.g. PyTorch's CPU-only wheel index)
+    env_var: str                     # names a Python to use (overrides the search)
+    dev_env: str                     # the developer's own environment, if present
+    download_note: dict[str, str]    # what installing costs, per device, shown before it starts
+    after_note: str                  # what else happens on first use
+    min_free_gb: int
+    purpose: str                     # one sentence: what it is for
+
+    @property
+    def folder(self) -> Path:
+        return media.DATA_ROOT / "engines" / self.key
+
+    @property
+    def required(self) -> list[str]:
+        return list(self.modules)
+
+    def pip_packages(self, device: str = "gpu") -> list[str]:
+        override = os.environ.get(f"SNAPPER_{self.key.upper()}_PACKAGES", "").split()   # tests install a stand-in
+        return override or list(self.gpu_packages if device == "gpu" else self.cpu_packages)
+
+    def pip_args(self, device: str = "gpu") -> list[str]:
+        return [] if device == "gpu" or os.environ.get(f"SNAPPER_{self.key.upper()}_PACKAGES") else list(self.cpu_pip_args)
+
+
+def has_nvidia() -> bool:
+    """Whether an NVIDIA GPU (driver) is present, which decides the preselected install type."""
+    return bool(shutil.which("nvidia-smi")) or Path("/proc/driver/nvidia").exists() or Path("/dev/nvidia0").exists()
+
+
+def default_device() -> str:
+    return "gpu" if has_nvidia() else "cpu"
+
+
+# PyTorch's own wheel index serves CPU-only builds (about 0.2 GB instead of several GB with the CUDA libraries)
+CPU_TORCH = ["--index-url", "https://download.pytorch.org/whl/cpu", "--extra-index-url", "https://pypi.org/simple"]
+
+
+WHISPERX = Engine(
+    key="whisperx", title="WhisperX",
+    modules={"whisperx": "WhisperX", "torch": "PyTorch", "torchaudio": "torchaudio"},
+    gpu_packages=["whisperx==3.8.6", "torch==2.8.0", "torchaudio==2.8.0"],
+    cpu_packages=["whisperx==3.8.6", "torch==2.8.0", "torchaudio==2.8.0"], cpu_pip_args=CPU_TORCH,
+    env_var="SNAPPER_WX_PYTHON", dev_env="~/envs/wx",
+    download_note={"gpu": "about 5 GB (PyTorch with its CUDA libraries)", "cpu": "about 1 GB (CPU-only PyTorch)"},
+    after_note="The first transcript then downloads the speech model (about 3 GB). On a CPU, transcribing is many times slower.",
+    min_free_gb=12, purpose="writes transcripts")
+
+SEPARATOR = Engine(
+    key="separator", title="audio-separator",
+    modules={"audio_separator": "audio-separator", "torch": "PyTorch", "onnxruntime": "ONNX Runtime"},
+    gpu_packages=["audio-separator[gpu]==0.47.1"], cpu_packages=["audio-separator[cpu]==0.47.1"],
+    cpu_pip_args=CPU_TORCH,
+    env_var="SNAPPER_SEP_PYTHON", dev_env="~/envs/sep",
+    download_note={"gpu": "about 5 GB (PyTorch and ONNX Runtime with their CUDA libraries)",
+                   "cpu": "about 1 GB (CPU-only PyTorch and ONNX Runtime)"},
+    after_note="The first isolation then downloads the vocal model (about 0.7 GB). On a CPU, isolating is very slow.",
+    min_free_gb=12, purpose="separates the dialogue from music and effects")
+
+ENGINES = {e.key: e for e in (WHISPERX, SEPARATOR)}
 
 
 def python_in(env_dir: Path) -> Path:
     return env_dir / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
 
 
+def system_python() -> Optional[Path]:
+    """The Python on PATH, if it is the machine's (inside a Flatpak, python3 is the sandbox's, not the user's)."""
+    if IN_FLATPAK:
+        return None
+    found = shutil.which("python3")
+    return Path(found) if found else None
+
+
 @dataclass
 class EngineStatus:
+    engine: Engine
     python: Optional[Path]                     # the interpreter that was checked (None: there is none)
-    source: str = ""                           # where it came from: chosen / environment / developer / snapper
+    source: str = ""                           # chosen / environment / developer / snapper / system
     python_version: str = ""
     versions: dict[str, Optional[str]] = field(default_factory=dict)   # module -> installed version, None if missing
     gpu: Optional[bool] = None                 # whether PyTorch can see a GPU (None: unknown)
@@ -49,28 +123,36 @@ class EngineStatus:
     def summary(self) -> str:
         """What is wrong, in a sentence."""
         if self.python is None:
-            return "There is no Python environment for WhisperX yet."
+            return "There is no Python environment for it yet."
         if self.error:
             return self.error
-        return "Missing: " + ", ".join(self.missing) + "." if self.missing else "Ready."
+        return ("Missing: " + ", ".join(self.engine.modules[m] for m in self.missing) + "." if self.missing
+                else "Ready.")
 
 
-def chosen_python() -> Optional[Path]:
-    v = QSettings("snapper", "snapper").value("engine/python", "")
+def _settings_key(engine: Engine) -> str:
+    return f"engine/{engine.key}/python"
+
+
+def chosen_python(engine: Engine) -> Optional[Path]:
+    v = QSettings("snapper", "snapper").value(_settings_key(engine), "")
     return Path(v) if v else None
 
 
-def set_chosen_python(path: Optional[Path]):
-    QSettings("snapper", "snapper").setValue("engine/python", str(path) if path else "")
+def set_chosen_python(engine: Engine, path: Optional[Path]):
+    QSettings("snapper", "snapper").setValue(_settings_key(engine), str(path) if path else "")
 
 
-def candidates() -> list[tuple[str, Path]]:
-    """The interpreters to try, best first. SNAPPER_WX_PYTHON is authoritative when set (and so is a chosen one)."""
-    if (c := chosen_python()) is not None:
+def candidates(engine: Engine) -> list[tuple[str, Path]]:
+    """The interpreters to try, best first. A chosen one, or one named by the environment variable, is authoritative."""
+    if (c := chosen_python(engine)) is not None:
         return [("chosen", c)]
-    if os.environ.get("SNAPPER_WX_PYTHON"):
-        return [("environment", Path(os.environ["SNAPPER_WX_PYTHON"]))]
-    return [("developer", Path.home() / "envs/wx/bin/python"), ("snapper", python_in(ENGINE_DIR))]
+    if os.environ.get(engine.env_var):
+        return [("environment", Path(os.environ[engine.env_var]))]
+    out = [("developer", python_in(Path(engine.dev_env).expanduser())), ("snapper", python_in(engine.folder))]
+    if (sp := system_python()) is not None:
+        out.append(("system", sp))
+    return out
 
 
 _PROBE = """
@@ -86,7 +168,10 @@ for m in %r:
         try:
             ver = md.version(m)
         except Exception:
-            ver = "installed"
+            try:
+                ver = md.version(m.replace("_", "-") + "-gpu")
+            except Exception:
+                ver = "installed"
     out["versions"][m] = ver
 gpu = None
 if out["versions"].get("torch"):
@@ -100,30 +185,33 @@ print(json.dumps(out))
 """
 
 
-def check(python: Path, source: str = "") -> EngineStatus:
-    """Asks an interpreter which of the required packages it has."""
+def check(engine: Engine, python: Path, source: str = "") -> EngineStatus:
+    """Asks an interpreter which of the engine's packages it has."""
     if not python.is_file() or not os.access(python, os.X_OK):
-        return EngineStatus(python, source, error=f"{python} is not a Python interpreter I can run.")
+        return EngineStatus(engine, python, source, error=f"{python} is not a Python interpreter I can run.")
     try:
-        r = subprocess.run([str(python), "-I", "-c", _PROBE % (REQUIRED,)], capture_output=True, text=True, timeout=120)
+        # -E: ignore PYTHON* variables; the user's own site-packages (pip install --user) must stay visible
+        r = subprocess.run([str(python), "-E", "-c", _PROBE % (engine.required,)], capture_output=True, text=True,
+                           timeout=120)
         data = json.loads(r.stdout.strip().splitlines()[-1])
     except (OSError, ValueError, IndexError, subprocess.TimeoutExpired) as e:
-        return EngineStatus(python, source, error=f"{python} could not be checked ({type(e).__name__}).")
-    return EngineStatus(python, source, data["python"], data["versions"], data["gpu"])
+        return EngineStatus(engine, python, source, error=f"{python} could not be checked ({type(e).__name__}).")
+    return EngineStatus(engine, python, source, data["python"], data["versions"], data["gpu"])
 
 
-def current() -> EngineStatus:
-    """The first environment that exists (and what it lacks), or a status with no Python at all."""
-    first_missing = None
-    for source, path in candidates():
+def current(engine: Engine) -> EngineStatus:
+    """The first environment that is complete; failing that the one closest to complete; failing that, none at all."""
+    best: Optional[EngineStatus] = None
+    for source, path in candidates(engine):
         if path.is_file():
-            st = check(path, source)
+            st = check(engine, path, source)
             if st.ok:
                 return st
-            first_missing = first_missing or st
+            if best is None or len(st.missing) < len(best.missing) or best.error:
+                best = st if not st.error or best is None else best
         elif source in ("chosen", "environment"):   # the user pointed at something that is not there
-            return EngineStatus(path, source, error=f"{path} does not exist.")
-    return first_missing or EngineStatus(None)
+            return EngineStatus(engine, path, source, error=f"{path} does not exist.")
+    return best or EngineStatus(engine, None)
 
 
 def free_gb(path: Path) -> float:
@@ -134,32 +222,48 @@ def free_gb(path: Path) -> float:
 
 
 class EngineInstaller(QObject):
-    """Creates ENGINE_DIR (an isolated virtual environment) and pip-installs the packages into it, in the background.
-    Everything is removed again if it fails or is cancelled, so a half-installed environment is never left behind."""
+    """Installs an engine's packages in the background, either into a new private environment under Snapper's data
+    folder (target "private") or into the system Python's user site (target "system", `pip install --user`).
+    A private install that fails or is cancelled is removed completely, so a half-installed environment is never left."""
     progress = Signal(str)       # the latest line of output
     stage = Signal(str)          # what it is doing
     done = Signal(bool, str)     # ok, message
 
-    def __init__(self, parent=None):
+    def __init__(self, engine: Engine, target: str = "private", device: str = "gpu", parent=None,
+                 break_system: bool = False):
         super().__init__(parent)
+        assert target in ("private", "system") and device in ("gpu", "cpu")
+        self.engine, self.target, self.device = engine, target, device
+        self.break_system = break_system     # install into a Python its distribution marks as externally managed (PEP 668)
+        self.pep668 = False                  # set when the install was refused for that reason
         self._proc: Optional[QProcess] = None
         self._tail: list[str] = []
         self._cancelled = False
         self._step = 0
+        self._python: Optional[Path] = None
 
     def start(self):
-        free = free_gb(ENGINE_DIR.parent)
-        if free < MIN_FREE_GB and not os.environ.get("SNAPPER_ENGINE_PACKAGES"):
-            self.done.emit(False, f"Not enough free disk space: {free:.0f} GB free, about {MIN_FREE_GB} GB needed.")
+        free = free_gb(self.engine.folder.parent)
+        need = self.engine.min_free_gb if self.device == "gpu" else 4
+        if free < need and not os.environ.get(f"SNAPPER_{self.engine.key.upper()}_PACKAGES"):
+            self.done.emit(False, f"Not enough free disk space: {free:.0f} GB free, about {need} GB needed.")
             return
-        shutil.rmtree(ENGINE_DIR, ignore_errors=True)   # a leftover from an earlier attempt
-        ENGINE_DIR.parent.mkdir(parents=True, exist_ok=True)
+        if self.target == "system":
+            self._python = system_python()
+            if self._python is None:
+                self.done.emit(False, "There is no system Python to install into.")
+                return
+            self._step = 1          # nothing to create
+        else:
+            shutil.rmtree(self.engine.folder, ignore_errors=True)   # a leftover from an earlier attempt
+            self.engine.folder.parent.mkdir(parents=True, exist_ok=True)
+            self._python = python_in(self.engine.folder)
         self._next()
 
     def _run(self, program: str, args: list[str]):
         self._proc = QProcess(self)
         env = QProcessEnvironment.systemEnvironment()
-        tmp = ENGINE_DIR.parent / "tmp"       # pip unpacks big wheels here: on disk, not in a RAM-backed /tmp
+        tmp = self.engine.folder.parent / "tmp"       # pip unpacks big wheels here: on disk, not in a RAM-backed /tmp
         tmp.mkdir(parents=True, exist_ok=True)
         env.insert("TMPDIR", str(tmp))
         env.insert("PIP_DISABLE_PIP_VERSION_CHECK", "1")
@@ -174,25 +278,36 @@ class EngineInstaller(QObject):
 
     def _next(self):
         self._step += 1
+        names = ", ".join(p.split("==")[0] for p in self.engine.pip_packages(self.device))
         if self._step == 1:
             self.stage.emit("Creating a Python environment for Snapper…")
-            self._run(sys.executable, ["-m", "venv", str(ENGINE_DIR)])
+            self._run(sys.executable, ["-m", "venv", str(self.engine.folder)])
         elif self._step == 2:
-            self.stage.emit("Downloading and installing " + ", ".join(p.split("==")[0] for p in PACKAGES) +
-                            " (this takes a while)…")
-            self._run(str(python_in(ENGINE_DIR)), ["-m", "pip", "install", "--no-cache-dir", "--progress-bar", "off",
-                                                   "--no-input", *PACKAGES])
+            where = "your system Python" if self.target == "system" else "Snapper's environment"
+            self.stage.emit(f"Downloading and installing {names} into {where} (this takes a while)…")
+            args = ["-m", "pip", "install", "--no-cache-dir", "--progress-bar", "off", "--no-input"]
+            if self.target == "system":
+                args.append("--user")        # into ~/.local, never into the system's own folders
+                if self.break_system:
+                    args.append("--break-system-packages")
+            self._run(str(self._python), args + self.engine.pip_args(self.device) + self.engine.pip_packages(self.device))
         elif self._step == 3:
             self.stage.emit("Checking the installation…")
-            st = check(python_in(ENGINE_DIR), "snapper")
+            st = check(self.engine, self._python, self.target if self.target == "system" else "snapper")
             if not st.ok:
                 self._fail(st.summary())
                 return
-            shutil.rmtree(ENGINE_DIR.parent / "tmp", ignore_errors=True)
-            self.done.emit(True, "WhisperX is installed for Snapper.")
+            shutil.rmtree(self.engine.folder.parent / "tmp", ignore_errors=True)
+            if self.target == "system":
+                set_chosen_python(self.engine, self._python)   # the system Python is not otherwise remembered
+            else:
+                set_chosen_python(self.engine, None)
+            self.done.emit(True, f"{self.engine.title} is installed.")
 
     def _read(self):
         for line in bytes(self._proc.readAll()).decode(errors="replace").replace("\r", "\n").splitlines():
+            if "externally-managed-environment" in line:   # pip's first line; the tail below would lose it
+                self.pep668 = True
             if line.strip():
                 self._tail = (self._tail + [line.strip()])[-12:]
                 self.progress.emit(line.strip())
@@ -201,7 +316,11 @@ class EngineInstaller(QObject):
         if self._cancelled:
             return
         if code != 0:
-            self._fail("The installation failed:\n" + "\n".join(self._tail[-6:]))
+            if self.pep668:
+                self._fail("Your system Python is managed by your distribution's package manager, which refuses pip "
+                           "installs (PEP 668).")
+            else:
+                self._fail("The installation failed:\n" + "\n".join(self._tail[-6:]))
         else:
             self._next()
 
@@ -218,5 +337,6 @@ class EngineInstaller(QObject):
         self.done.emit(False, "Cancelled.")
 
     def _cleanup(self):
-        shutil.rmtree(ENGINE_DIR, ignore_errors=True)
-        shutil.rmtree(ENGINE_DIR.parent / "tmp", ignore_errors=True)
+        if self.target == "private":   # a system install is pip's to keep or roll back
+            shutil.rmtree(self.engine.folder, ignore_errors=True)
+        shutil.rmtree(self.engine.folder.parent / "tmp", ignore_errors=True)

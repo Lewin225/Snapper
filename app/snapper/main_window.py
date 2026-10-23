@@ -15,7 +15,7 @@ from . import media
 from . import export as exporting
 from .export_dialog import ExportSettingsDialog
 from .pathnames import INVALID_HELP, VALID_INPUT_PATTERN, clean_tag
-from . import engine_dialog, launcher, recent
+from . import engine, engine_dialog, isolation, launcher, recent
 from .progress import JobBars, ProxyBanner
 from .titles import section_title
 from .clips_panel import ClipsPanel
@@ -89,6 +89,8 @@ class MainWindow(QMainWindow):
         self._spinner = QTimer(self, interval=150)   # animates the 'Exporting' marker in the library
         self._pcm_waiters: dict[Path, list] = {}   # decoded audio being prepared -> who is waiting for it
         self._on_proxy = False
+        self.isolation_job: Optional[isolation.IsolationJob] = None
+        self._wave_isolated = False                  # whether the waveform shows the isolated audio
 
         # --- widgets
         self.video = VideoWidget(self.player)
@@ -178,6 +180,7 @@ class MainWindow(QMainWindow):
         self.editor.range_edited.connect(self.on_wave_edited)
         self.editor.preview_requested.connect(self.player.scrub)
         self.editor.save_requested.connect(self.commit)
+        self.editor.source_requested.connect(self.on_source_requested)
         self.editor.deselect_requested.connect(self.deselect_clip)
         self.editor.edited.connect(self.on_edited)
         self.editor.play_btn.clicked.connect(self.play_selection)
@@ -282,6 +285,14 @@ class MainWindow(QMainWindow):
         self.act_proxy.toggled.connect(self.set_proxy_enabled)
         g = m.addMenu("T&ags")
         self._action(g, "Add tag type…", self.add_tag_type)
+        a = m.addMenu("&Audio")
+        self.act_isolate = self._action(a, "Isolate vocals using audio-separator", self.start_isolation)
+        self.act_custom_audio = self._action(a, "Load custom audio replacement…", self.load_custom_audio)
+        self.act_isolate_cancel = self._action(a, "Cancel isolation", self.cancel_isolation)
+        self.act_isolate_cancel.setEnabled(False)
+        self._action(a, "Isolation model…", self.choose_isolation_model)
+        self.act_isolate_remove = self._action(a, "Remove isolated audio", self.remove_isolation)
+        a.aboutToShow.connect(self._update_audio_menu)
         e = m.addMenu("&Export")
         self.act_export = self._action(e, "Export new and changed clips", lambda: self.export_clips())
         self.act_export_all = self._action(e, "Re-export all clips", lambda: self.export_clips(force=True))
@@ -328,6 +339,7 @@ class MainWindow(QMainWindow):
         media.purge_old_export_audio()
         self.exporter.verify_files()
         self._fill_audio_combo()
+        self._sync_isolated()
         self._load_audio()
         self._survey_subtitles()
         self.act_proxy.setChecked(self.project.proxy_enabled)
@@ -408,6 +420,7 @@ class MainWindow(QMainWindow):
         self.project.audio_track = index
         self.project.dirty.emit()
         self.player.set_audio_track(index)
+        self._sync_isolated()
         self._load_audio()
 
     def _load_audio(self):
@@ -423,11 +436,12 @@ class MainWindow(QMainWindow):
             self._audio_job = None
             self._job_state.pop("audio", None)
             self._refresh_job_label()
-        if media.audio_path(self.media_path, track).exists():
+        iso = self._effective_source() == "isolated"
+        if media.audio_path(self.media_path, track, iso).exists():
             self._audio_ready(track)
         elif self.info.audio:
             self.editor.wave.set_audio(None)
-            job = media.audio_job(self.info, self.info.duration, track)
+            job = media.audio_job(self.info, self.info.duration, track, isolated=iso)
             self._audio_job = job
             self._run_job(job, "audio", lambda: self._audio_ready(track))
 
@@ -513,7 +527,199 @@ class MainWindow(QMainWindow):
 
     def _audio_ready(self, track: int):
         if track == self.project.audio_track:  # ignore a decode that finished after the track was changed
-            self.editor.wave.set_audio(media.open_audio(media.audio_path(self.media_path, track)))
+            iso = self._effective_source() == "isolated"
+            path = media.audio_path(self.media_path, track, iso)
+            if path.exists():
+                self._wave_isolated = iso
+                self.editor.wave.set_audio(media.open_audio(path))
+
+    # ------------------------------------------------------------------ audio source (original / isolated)
+    def isolated_ready(self) -> bool:
+        return media.has_isolated(self.media_path, self.project.audio_track)
+
+    def _effective_source(self) -> str:
+        """The audio the current clip really uses: its own choice, unless the isolated audio is not there."""
+        return "isolated" if self.editor.clip.source == "isolated" and self.isolated_ready() else "original"
+
+    def _sync_isolated(self):
+        """Tells the player about this track's isolated audio (if any), and the editor whether it can be chosen."""
+        path = media.isolated_pcm_path(self.media_path, self.project.audio_track)
+        reload_needed = self.player.set_isolated(str(path) if path.exists() else None, len(self.info.audio))
+        if reload_needed:
+            self._use_proxy_or_original()
+        self._apply_source()
+
+    def _apply_source(self):
+        """Makes playback and the waveform follow the clip being edited."""
+        self.editor.show_source(self.editor.clip.source, self.isolated_ready())
+        iso = self._effective_source() == "isolated"
+        self.player.use_isolated(iso)
+        if iso != self._wave_isolated:
+            self._load_audio()
+
+    def on_source_requested(self, source: str):
+        c = self.editor.clip
+        if source == "isolated" and not self.isolated_ready():
+            self.editor.show_source(c.source, False)   # the button springs back until there is something to switch to
+            if self._ask_isolate_now():
+                self.start_isolation()
+            return
+        if source == c.source:
+            return
+        c.source = source
+        self._apply_source()
+        self.on_edited()
+
+    def _ask_isolate_now(self) -> bool:
+        return QMessageBox.question(self, "Isolate vocals",
+                                    "There is no isolated audio for this episode yet.\n\nIsolate the vocals now with "
+                                    "audio-separator? It runs in the background while you keep working.") == QMessageBox.Yes
+
+    def _confirm_reisolate(self) -> bool:
+        return QMessageBox.question(
+            self, "Isolate vocals", "This track has been isolated already. Do it again with the model set now "
+            f"({isolation.model()})? The current isolated audio stays until the new one is ready.") == QMessageBox.Yes
+
+    def toggle_source(self):
+        self.on_source_requested("original" if self.editor.clip.source == "isolated" else "isolated")
+
+    # ------------------------------------------------------------------ vocal isolation
+    def _update_audio_menu(self):
+        running = self.isolation_job is not None
+        self.act_isolate.setEnabled(not running)
+        self.act_custom_audio.setEnabled(not running)
+        self.act_isolate_cancel.setEnabled(running)
+        self.act_isolate_remove.setEnabled(self.isolated_ready() and not running)
+
+    def start_isolation(self):
+        if self.isolation_job:
+            return
+        if not self.info.audio:
+            QMessageBox.information(self, "Isolate vocals", "This video has no audio to isolate.")
+            return
+        status = engine_dialog.ensure_engine(engine.SEPARATOR, self)   # says what is missing and offers to install it
+        if status is None:
+            self.statusBar().showMessage("audio-separator is not set up. Everything else works on the original audio.", 8000)
+            return
+        track = self.project.audio_track
+        if self.isolated_ready() and not self._confirm_reisolate():
+            return
+        self._with_pcm(track, 2, media.ISOLATED_RATE, 16,
+                       lambda pcm_in: self._run_isolation(status, track, pcm_in),
+                       lambda err: self.statusBar().showMessage(f"Could not prepare the audio: {err}", 10000))
+
+    def _run_isolation(self, status, track: int, pcm_in: Path):
+        out = media.isolated_pcm_path(self.media_path, track)
+        job = isolation.IsolationJob(status.python, pcm_in, out, isolation.model(), parent=self)
+        self.isolation_job = job
+        self._job_state["isolation"] = 0.0
+        self._refresh_job_label()
+        job.progress.connect(lambda p: self._job_progress("isolation", p))
+        job.stage.connect(lambda text: self.statusBar().showMessage(text, 20000))
+
+        def done(ok: bool, err: str):
+            self.isolation_job = None
+            self._job_state.pop("isolation", None)
+            self._refresh_job_label()
+            if ok:
+                self._adopt_isolated_audio(track, "Vocals isolated.")
+            elif err:
+                QMessageBox.warning(self, "Isolating vocals failed", err)
+        job.done.connect(done)
+        job.start()
+
+    def _adopt_isolated_audio(self, track: int, message: str):
+        """The isolated (or custom) audio file for `track` is in place: build its waveform, then it can be chosen."""
+        if track != self.project.audio_track:
+            self.statusBar().showMessage(message, 8000)
+            return
+        media.audio_path(self.media_path, track, True).unlink(missing_ok=True)
+        self._run_job(media.audio_job(self.info, self.info.duration, track, isolated=True), "audio",
+                      lambda: self._isolation_ready(track, message))
+
+    def _pick_audio_file(self) -> Optional[Path]:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load custom audio replacement", str(self.media_path.parent),
+            "Audio files (*.wav *.flac *.mp3 *.ogg *.opus *.m4a *.aac *.mka *.wma);;All files (*)")
+        return Path(path) if path else None
+
+    def _confirm_length_mismatch(self, file_len: float, episode_len: float) -> bool:
+        return QMessageBox.question(
+            self, "Load custom audio replacement",
+            f"The file is {file_len:.1f} s long but the episode is {episode_len:.1f} s.\n\nIt will be placed at the very "
+            "start of the episode, padded with silence or cut at the end. If it doesn't line up with the episode, the "
+            "clips will be cut from the wrong moments.\n\nUse it anyway?") == QMessageBox.Yes
+
+    def load_custom_audio(self):
+        """Uses an audio file made elsewhere (another model, a stem from a mixing tool…) in place of the isolated audio.
+        It must line up with the episode: sample N of the file is taken to be the same moment as sample N of the video."""
+        if self.isolation_job:
+            QMessageBox.information(self, "Load custom audio replacement", "Wait for the isolation to finish, or cancel it first.")
+            return
+        src = self._pick_audio_file()
+        if src is None:
+            return
+        length = media.audio_duration(src)
+        if length <= 0:
+            QMessageBox.warning(self, "Load custom audio replacement", f"{src.name} is not an audio file I can read.")
+            return
+        if abs(length - self.info.duration) > 1.0 and not self._confirm_length_mismatch(length, self.info.duration):
+            return
+        if self.isolated_ready() and not self._confirm_replace_audio():
+            return
+        track = self.project.audio_track
+
+        def convert(pcm_in: Path):
+            frames = pcm_in.stat().st_size // 4   # exactly as many frames as the original's stereo decode
+            job = media.custom_audio_job(src, frames, self.info.duration, media.isolated_pcm_path(self.media_path, track))
+            self._run_job(job, "pcm", lambda: self._adopt_isolated_audio(track, f"Using {src.name} as the replacement audio."),
+                          lambda err: self.statusBar().showMessage(f"Could not use {src.name}: {err}", 10000))
+        self._with_pcm(track, 2, media.ISOLATED_RATE, 16, convert,
+                       lambda err: self.statusBar().showMessage(f"Could not prepare the audio: {err}", 10000))
+
+    def _confirm_replace_audio(self) -> bool:
+        return QMessageBox.question(self, "Load custom audio replacement",
+                                    "This track already has isolated audio. Replace it with this file?") == QMessageBox.Yes
+
+    def _isolation_ready(self, track: int, message: str = "Vocals isolated."):
+        for f in media.cache_dir(self.media_path).glob(f"export_a{track}_iso_*.pcm"):   # decodes of the previous version
+            f.unlink(missing_ok=True)
+        self.exporter.forget_audio()
+        self._sync_isolated()
+        self.statusBar().showMessage(f"{message} Switch a clip to Isolated in the clip editor (V).", 10000)
+
+    def cancel_isolation(self):
+        if self.isolation_job:
+            job, self.isolation_job = self.isolation_job, None
+            job.kill()
+            self._job_state.pop("isolation", None)
+            self._refresh_job_label()
+            self.statusBar().showMessage("Isolation cancelled.", 5000)
+
+    def choose_isolation_model(self):
+        names = [f"{label}  [{file}]" for file, label in isolation.MODELS]
+        current = next((i for i, (f, _l) in enumerate(isolation.MODELS) if f == isolation.model()), 0)
+        choice, ok = QInputDialog.getItem(self, "Isolation model", "Model used to separate the vocals:", names, current, False)
+        if ok:
+            isolation.set_model(isolation.MODELS[names.index(choice)][0])
+            self.statusBar().showMessage("The model is used the next time you isolate (the first use downloads it).", 8000)
+
+    def remove_isolation(self):
+        track = self.project.audio_track
+        using = [c for c in self.project.clips if c.source == "isolated"]
+        if QMessageBox.question(self, "Remove isolated audio",
+                                "Delete the isolated audio for this track?" +
+                                (f"\n\n{len(using)} clip(s) use it and will play and export the original audio instead."
+                                 if using else "")) != QMessageBox.Yes:
+            return
+        for c in using:
+            c.source = "original"
+            self.project.touch(c)
+        if self.editor.clip.source == "isolated":
+            self.editor.clip.source = "original"
+        media.remove_isolated(self.media_path, track)
+        self.exporter.forget_audio()
+        self._sync_isolated()
 
     def _proxy_ready(self):
         self._proxy_job = None
@@ -537,7 +743,7 @@ class MainWindow(QMainWindow):
     def start_transcription(self):
         if self.transcript_job:
             return
-        status = engine_dialog.ensure_engine(self)   # says what is missing and offers to install it
+        status = engine_dialog.ensure_engine(engine.WHISPERX, self)   # says what is missing and offers to install it
         if status is None:
             self.statusBar().showMessage("WhisperX is not set up. Subtitles from the video or a file work without it.", 8000)
             return
@@ -580,6 +786,7 @@ class MainWindow(QMainWindow):
     def edit(self, clip: Clip):
         """Make `clip` (a stored clip or the pending one) the clip being edited."""
         self.editor.load_clip(clip)
+        self._apply_source()
         self.project.select(clip.id)
         self.clips.select(clip if clip.id is not None else None)
         if clip.id is not None and clip.start is not None:
@@ -619,7 +826,7 @@ class MainWindow(QMainWindow):
         if c.start is None or c.end is None:
             return
         if c.id is None:
-            new = self.project.add(Clip(c.start, c.end, c.text, c.text_auto, dict(c.tags)))
+            new = self.project.add(Clip(c.start, c.end, c.text, c.text_auto, dict(c.tags), source=c.source))
             c.start = c.end = None
             c.text, c.text_auto = "", True
             for t in list(c.tags):   # text and number tags stay (the next line is usually the same speaker); yes/no tags reset
@@ -632,7 +839,7 @@ class MainWindow(QMainWindow):
 
     def duplicate_clip(self, clip: Clip):
         """A copy with the same range, text and tags, right after the original; it opens for editing."""
-        copy = self.project.add(Clip(clip.start, clip.end, clip.text, clip.text_auto, dict(clip.tags)))
+        copy = self.project.add(Clip(clip.start, clip.end, clip.text, clip.text_auto, dict(clip.tags), source=clip.source))
         self.edit(copy)
 
     def _confirm_delete(self, clip: Clip) -> str:
@@ -783,14 +990,33 @@ class MainWindow(QMainWindow):
         self._confirm_moves(targets, s)
         self.exporter.mark_queued(targets)
         track = self.project.audio_track
-        self._with_export_audio(
-            s, track,
-            lambda path: self.exporter.submit(targets, s, path),
-            lambda err: self.exporter.cancel_queued(targets, f"Could not prepare the audio: {err}"))
+        lost = [c for c in targets if c.source == "isolated" and not self.isolated_ready()]
+        if lost:   # their isolated audio was removed or never made on this track
+            self.exporter.cancel_queued(lost, "This clip uses isolated audio, which is not there. Isolate the vocals "
+                                              "again (Audio menu) or switch the clip to Original.")
+            targets = [c for c in targets if c not in lost]
+            if not targets:
+                return
+        sources = sorted({c.source for c in targets})   # each source needs its own decode of the audio
+        paths: dict[str, Path] = {}
+        state = {"failed": False}
 
-    def _with_export_audio(self, s, track: int, ok, fail):
-        """Calls ok(path) once the decoded audio for these export settings exists (decoding it first if needed)."""
-        path = media.export_pcm_path(self.media_path, track, s.channels, s.sample_rate, s.source_bits)
+        def got(src: str, path: Path):
+            paths[src] = path
+            if len(paths) == len(sources) and not state["failed"]:
+                self.exporter.submit(targets, s, paths)
+
+        def failed(err: str):
+            if not state["failed"]:
+                state["failed"] = True
+                self.exporter.cancel_queued(targets, f"Could not prepare the audio: {err}")
+        for src in sources:
+            self._with_pcm(track, s.channels, s.sample_rate, s.source_bits, lambda p, src=src: got(src, p), failed,
+                           isolated=(src == "isolated"))
+
+    def _with_pcm(self, track: int, channels: int, rate: int, bits: int, ok, fail, isolated: bool = False):
+        """Calls ok(path) once this decode of the audio exists (making it first if needed)."""
+        path = media.export_pcm_path(self.media_path, track, channels, rate, bits, isolated)
         if path.exists():
             ok(path)
             return
@@ -799,7 +1025,7 @@ class MainWindow(QMainWindow):
             waiters.append((ok, fail))
             return
         self._pcm_waiters[path] = [(ok, fail)]
-        job = media.pcm_job(self.info, self.info.duration, track, s.channels, s.sample_rate, s.source_bits)
+        job = media.pcm_job(self.info, self.info.duration, track, channels, rate, bits, isolated=isolated)
 
         def finished(good: bool, err: str = ""):
             for o, f in self._pcm_waiters.pop(path, []):
@@ -913,6 +1139,8 @@ class MainWindow(QMainWindow):
             self.set_out()
         elif k == Qt.Key_P:
             self.play_selection()
+        elif k == Qt.Key_V:
+            self.toggle_source()
         elif k in (Qt.Key_Return, Qt.Key_Enter):
             self.commit()
         elif k == Qt.Key_Escape:

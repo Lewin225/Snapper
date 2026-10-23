@@ -6,7 +6,7 @@ from typing import Optional
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QProgressBar, QWidget
 
-JOB_NAMES = {"proxy": "Scrub proxy", "audio": "Decoding audio", "transcript": "Transcribing",
+JOB_NAMES = {"proxy": "Scrub proxy", "audio": "Decoding audio", "transcript": "Transcribing", "isolation": "Isolating vocals",
              "subtitles": "Reading subtitles",
              "pcm": "Preparing audio", "export": "Exporting"}
 

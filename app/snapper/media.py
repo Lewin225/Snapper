@@ -75,9 +75,26 @@ def cache_dir(media: Path) -> Path:
     return d
 
 
-def audio_path(media: Path, track: int = 0) -> Path:
-    """Decoded mono PCM for one audio track (track 0 keeps the original file name)."""
+def audio_path(media: Path, track: int = 0, isolated: bool = False) -> Path:
+    """Decoded mono PCM for one audio track (track 0 keeps the original file name); `isolated` is the same moment-for-
+    moment audio with only the dialogue left in (see isolated_pcm_path)."""
+    if isolated:
+        return cache_dir(media) / f"audio_{RATE}_a{track}_iso.s16"
     return cache_dir(media) / (f"audio_{RATE}.s16" if track == 0 else f"audio_{RATE}_a{track}.s16")
+
+
+ISOLATED_RATE, ISOLATED_CHANNELS = 44100, 2
+
+
+def isolated_pcm_path(media: Path, track: int = 0) -> Path:
+    """The vocal-isolated version of a track: a 16-bit stereo 44.1 kHz WAV, sample N the same moment as sample N of the
+    track decoded with export_pcm_path(..., 2, 44100, 16). Everything isolated-audio (waveform, playback, export) is
+    derived from this one file."""
+    return cache_dir(media) / f"isolated_a{track}.wav"
+
+
+def has_isolated(media: Path, track: int = 0) -> bool:
+    return isolated_pcm_path(media, track).exists()
 
 
 def proxy_path(media: Path) -> Path:
@@ -195,20 +212,47 @@ def pcm_args(info: MediaInfo, track: int, channels: int, rate: int, bits: int) -
             "-ac", str(channels), "-ar", str(rate), "-f", SAMPLE_FORMATS[bits][0]]
 
 
-def audio_job(info: MediaInfo, duration: float, track: int = 0, parent=None) -> FfmpegJob:
+def isolated_args(media: Path, track: int, channels: int, rate: int, bits: int) -> list[str]:
+    """Like pcm_args, but reading the isolated PCM file instead of the video, so the waveform and every export of
+    isolated audio come from one source exactly as they do for the original."""
+    return ["-i", str(isolated_pcm_path(media, track)), "-vn", "-af", "aresample=rematrix_maxval=1.0",
+            "-ac", str(channels), "-ar", str(rate), "-f", SAMPLE_FORMATS[bits][0]]
+
+
+def custom_audio_job(source: Path, frames: int, duration: float, out: Path, parent=None) -> FfmpegJob:
+    """Turns any audio file into the isolated-audio WAV (16-bit stereo 44.1 kHz) with exactly `frames` frames: placed at
+    time 0 like the episode, padded with silence or cut at the end, so sample N is the same moment as in the original."""
+    return FfmpegJob(["-i", str(source), "-vn", "-af",
+                      f"aresample={ISOLATED_RATE},aformat=channel_layouts=stereo,apad=whole_len={frames},atrim=end_sample={frames}",
+                      "-c:a", "pcm_s16le", "-fflags", "+bitexact", "-flags:a", "+bitexact", "-f", "wav"], duration, out, parent)
+
+
+def audio_duration(path: Path) -> float:
+    """Length of an audio file in seconds, 0.0 if ffprobe cannot read it."""
+    r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
+                       capture_output=True, text=True)
+    try:
+        return float(r.stdout.strip())
+    except ValueError:
+        return 0.0
+
+
+def audio_job(info: MediaInfo, duration: float, track: int = 0, parent=None, isolated: bool = False) -> FfmpegJob:
     """The waveform's audio: mono, 16-bit, RATE."""
-    return FfmpegJob(pcm_args(info, track, 1, RATE, 16), duration, audio_path(info.path, track), parent)
+    args = isolated_args(info.path, track, 1, RATE, 16) if isolated else pcm_args(info, track, 1, RATE, 16)
+    return FfmpegJob(args, duration, audio_path(info.path, track, isolated), parent)
 
 
-def export_pcm_path(media: Path, track: int, channels: int, rate: int, bits: int) -> Path:
+def export_pcm_path(media: Path, track: int, channels: int, rate: int, bits: int, isolated: bool = False) -> Path:
     if (channels, rate, bits) == (1, RATE, 16):
-        return audio_path(media, track)   # identical to the waveform's audio: exports slice that very file
-    return cache_dir(media) / f"export_a{track}_{channels}ch_{rate}_{bits}.pcm"
+        return audio_path(media, track, isolated)   # identical to the waveform's audio: exports slice that very file
+    return cache_dir(media) / f"export_a{track}{'_iso' if isolated else ''}_{channels}ch_{rate}_{bits}.pcm"
 
 
-def pcm_job(info: MediaInfo, duration: float, track: int, channels: int, rate: int, bits: int, parent=None) -> FfmpegJob:
-    return FfmpegJob(pcm_args(info, track, channels, rate, bits), duration,
-                     export_pcm_path(info.path, track, channels, rate, bits), parent)
+def pcm_job(info: MediaInfo, duration: float, track: int, channels: int, rate: int, bits: int, parent=None,
+            isolated: bool = False) -> FfmpegJob:
+    args = isolated_args(info.path, track, channels, rate, bits) if isolated else pcm_args(info, track, channels, rate, bits)
+    return FfmpegJob(args, duration, export_pcm_path(info.path, track, channels, rate, bits, isolated), parent)
 
 
 def open_pcm(path: Path, channels: int, bits: int) -> np.ndarray:
@@ -262,6 +306,13 @@ def extract_subtitle(media: Path, order: int) -> Path:
         subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", str(media), "-map", f"0:s:{order}",
                         "-c:s", "srt", "-f", "srt", str(out)], check=True)
     return out
+
+
+def remove_isolated(media: Path, track: int):
+    """Deletes a track's isolated audio and everything derived from it (the waveform, export decodes)."""
+    for f in (isolated_pcm_path(media, track), audio_path(media, track, True),
+              *cache_dir(media).glob(f"export_a{track}_iso_*.pcm")):
+        f.unlink(missing_ok=True)
 
 
 def remove_export_audio(media: Path):
