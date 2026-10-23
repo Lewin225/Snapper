@@ -10,4 +10,7 @@ if ! "$PY" -c "import PySide6, mpv, numpy" 2>/dev/null; then
     exit 1
 fi
 command -v ffmpeg >/dev/null || { echo "Snapper needs ffmpeg on your PATH." >&2; exit 1; }
-cd "$HERE/app" && exec "$PY" -u -m snapper "$@"
+# Paths are made absolute first, because the app runs from its own folder.
+args=()
+for a in "$@"; do [ -e "$a" ] && a="$(readlink -f "$a")"; args+=("$a"); done
+cd "$HERE/app" && exec "$PY" -u -m snapper "${args[@]}"
