@@ -176,6 +176,20 @@ still = run(v, 1.5, lambda t: 6.0)
 assert np.abs(still[-RATE // 2:]).max() < 1e-4, "granular is silent when the cursor is still too"
 print("ok   granular scrub: the pitch stays at 440 Hz at 1x, 2x, 0.5x and backwards; silent when still")
 
+# the preview volume applies to the scrub sound, on mpv's curve, and so does mute
+win.volume.setValue(100)
+assert abs(win._preview_gain() - 1.0) < 1e-9
+win.volume.setValue(50)
+assert abs(win._preview_gain() - 0.125) < 1e-9 and abs(win.tape.voice.gain - 0.125) < 1e-9
+v = TapeVoice(); v.begin(5.0, tone, None, 0.0, False); loud = np.abs(run(v, 1.0, lambda t: 5.0 + t)).max()
+v = TapeVoice(); v.gain = 0.125; v.begin(5.0, tone, None, 0.0, False); quiet = np.abs(run(v, 1.0, lambda t: 5.0 + t)).max()
+assert abs(quiet / loud - 0.125) < 0.01 and abs(loud - 12000 / 32768 * 1.16) < 0.03, (loud, quiet)
+win.toggle_mute()
+assert win._preview_gain() == 0.0 and win.tape.voice.gain == 0.0
+win.toggle_mute()
+win.volume.setValue(80)
+print("ok   the scrub sound follows the volume slider (mpv's cubic curve) and mute, at mpv's loudness")
+
 iso = (tone // 4)
 v.begin(3.0, tone, iso, 8.0, True)                            # processed audio where it exists, the original beyond
 assert v._array() is iso

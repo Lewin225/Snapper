@@ -278,6 +278,7 @@ class MainWindow(QMainWindow):
         row.addWidget(deselect_box, 1)
         self.mute = button("Mute", "Mute / unmute preview audio", self.toggle_mute)
         self.mute.setFixedWidth(64)
+        self.tape = TapeScrub()
         self.volume = QSlider(Qt.Horizontal)
         self.volume.setRange(0, 100)
         self.volume.setFixedWidth(120)
@@ -348,7 +349,6 @@ class MainWindow(QMainWindow):
             group.addAction(act)
             scrub.addAction(act)
             self.act_scrub_mode[key] = act
-        self.tape = TapeScrub()
         self.set_scrub_mode(QSettings("snapper", "snapper").value("scrub/sound", "tape"), save=False)
         e = m.addMenu("&Export")
         self.act_export = self._action(e, "Export new and changed clips", lambda: self.export_clips())
@@ -1052,6 +1052,7 @@ class MainWindow(QMainWindow):
             self._scrub_idle.start()
 
     def _begin_tape(self, granular: bool = False):
+        self.tape.set_volume(self._preview_gain())
         wave = self.editor.wave
         t = wave.playhead
         self.tape.begin(t, wave.samples, wave.iso_samples, self.isolated_upto(), self.editor.clip.source == "isolated",
@@ -1435,13 +1436,20 @@ class MainWindow(QMainWindow):
         self.btn_play.setText("▶ Play" if paused else "❚❚ Pause")
         self.update_time_label()
 
+    def _preview_gain(self) -> float:
+        """What the preview volume does to the amplitude: mpv's volume is cubic (50 plays at an eighth, 80 at about a half),
+        and nothing is heard when muted."""
+        return 0.0 if self.player.mpv.mute else (self.volume.value() / 100) ** 3
+
     def set_volume(self, v: int):
         self.player.mpv.volume = v
+        self.tape.set_volume(self._preview_gain())
         QSettings("snapper", "snapper").setValue("volume", v)
 
     def toggle_mute(self):
         muted = not self.player.mpv.mute
         self.player.mpv.mute = muted
+        self.tape.set_volume(self._preview_gain())
         self.mute.setText("Unmute" if muted else "Mute")
 
     def update_time_label(self):

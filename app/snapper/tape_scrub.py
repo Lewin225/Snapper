@@ -16,7 +16,7 @@ from .media import RATE
 
 LAG = 0.05          # seconds: the sound follows the cursor with this much give, which is what smooths the speed
 MAX_SPEED = 12.0    # times normal speed, either way
-GAIN = 0.8
+LEVEL = 1.16        # the waveform's mono audio is 1.3 dB quieter than what mpv plays for the same moment (measured)
 FADE = 0.06         # seconds to let the sound die away when the drag ends
 STILL = 0.04        # speed (times normal) below which nothing is heard
 GRAIN = 0.05        # granular: seconds per grain...
@@ -34,6 +34,7 @@ class TapeVoice:
         self.speed = 0.0                                  # times normal speed
         self.level = 0.0                                  # 0..1, the fade at the start and end of a drag
         self.ending = False
+        self.gain = 1.0                                   # the preview volume: mpv's curve, 0 when muted
         self.granular = False                             # short overlapping pieces at normal pitch, not a varispeed
         self._grains: list = []                           # [array, first sample, how many of its samples are played]
         self._until_grain = 0                             # output frames until the next grain starts
@@ -95,7 +96,7 @@ class TapeVoice:
             if gr[2] < g:
                 alive.append(gr)
         self._grains = alive
-        return out * (GAIN / 32768.0)
+        return out * (LEVEL / 32768.0)
 
     def render(self, n: int) -> np.ndarray:
         arr = self._array()
@@ -116,13 +117,13 @@ class TapeVoice:
             frac = (idx - i0).astype(np.float32)
             a = np.asarray(arr[i0], dtype=np.float32)
             b = np.asarray(arr[i0 + 1], dtype=np.float32)
-            s = (a + (b - a) * np.clip(frac, 0, 1)) * (GAIN / 32768.0)
+            s = (a + (b - a) * np.clip(frac, 0, 1)) * (LEVEL / 32768.0)
         amp = np.clip(np.abs(speeds) / STILL, 0.0, 1.0).astype(np.float32)   # nothing when still, no click on the way in
         moved = dt / (FADE if self.ending else 0.005)   # the fade in at the start of a drag, and out at the end
         level1 = float(np.clip(self.level + (-moved if self.ending else moved), 0.0, 1.0))
         ramp = np.linspace(self.level, level1, n, dtype=np.float32)
         self.level = level1
-        return s * amp * ramp
+        return s * amp * ramp * self.gain
 
 
 BLOCK = 256         # frames per write (about 6 ms)
@@ -185,6 +186,9 @@ class TapeScrub:
     def set_target(self, t: float):
         if self.active:
             self.voice.set_target(t)
+
+    def set_volume(self, gain: float):
+        self.voice.gain = gain
 
     def end(self):
         """The drag is over: the sound dies away and the output closes."""
