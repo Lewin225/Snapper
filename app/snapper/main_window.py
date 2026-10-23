@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
 from PySide6.QtCore import QEvent, QObject, QRegularExpression, QSettings, Qt, QTimer
-from PySide6.QtGui import QAction, QKeySequence, QRegularExpressionValidator
+from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QRegularExpressionValidator
 from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
                                QFormLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QPushButton, QSlider,
                                QSplitter, QTextEdit, QVBoxLayout, QWidget)
@@ -82,6 +83,10 @@ class MainWindow(QMainWindow):
         self.player = Player(self)
         self.pending = Clip()          # the new clip being cut; tags stay set between clips
         self.jobs: list = []
+        self._smooth = False
+        self._pos_t = self._shown = 0.0       # the last position mpv reported, and the playhead as drawn
+        self._pos_wall = time.monotonic()     # when it was reported
+        self._glide = QTimer(self, timerType=Qt.PreciseTimer, timeout=self._glide_tick)
         self._cancelled: set = set()   # jobs stopped on purpose: their ending is not reported as a failure
         self._job_state: dict[str, Optional[float]] = {}   # running job -> fraction done (None = unknown)
         self._acc = Transcript()
@@ -291,6 +296,17 @@ class MainWindow(QMainWindow):
         self.act_proxy.setCheckable(True)
         self.act_proxy.setChecked(True)
         self.act_proxy.toggled.connect(self.set_proxy_enabled)
+        motion = v.addMenu("Playhead motion")
+        group = QActionGroup(self)
+        self.act_motion = {}
+        for key, text in (("accurate", "Accurate (follows the video frames)"),
+                          ("smooth", "Smooth (moves with every screen refresh)")):
+            act = QAction(text, self, checkable=True)
+            act.triggered.connect(lambda _c=False, k=key: self.set_playhead_motion(k))
+            group.addAction(act)
+            motion.addAction(act)
+            self.act_motion[key] = act
+        self.set_playhead_motion(QSettings("snapper", "snapper").value("playhead/motion", "smooth"), save=False)
         g = m.addMenu("T&ags")
         self._action(g, "Add tag type…", self.add_tag_type)
         a = m.addMenu("&Audio")
@@ -1222,17 +1238,51 @@ class MainWindow(QMainWindow):
         self.project.rename_value(tag, old, new.strip())
 
     # ------------------------------------------------------------------ playback + keys
+    def set_playhead_motion(self, mode: str, save: bool = True):
+        """Accurate: the waveform's playhead jumps to the position mpv reports, which updates once per video frame (30 or
+        24 times a second). Smooth: between those reports it moves on by the time that has passed, on every screen
+        refresh, so it glides on a high refresh rate monitor."""
+        self._smooth = mode == "smooth"
+        self.act_motion["smooth" if self._smooth else "accurate"].setChecked(True)
+        if save:
+            QSettings("snapper", "snapper").setValue("playhead/motion", mode)
+        self._glide_check()
+
+    def _glide_check(self):
+        want = self._smooth and not self.player.paused
+        if want and not self._glide.isActive():
+            rate = self.screen().refreshRate() if self.screen() else 60.0
+            self._glide.setInterval(max(4, int(1000 / max(rate, 30.0))))
+            self._glide.start()
+        elif not want:
+            self._glide.stop()
+            self.editor.wave.playhead = self.player.pos
+            self.editor.wave.update()
+
+    def _glide_tick(self):
+        t = self._pos_t + min(time.monotonic() - self._pos_wall, 0.25)   # a stalled player must not run ahead
+        if abs(t - self._shown) > 0.3:
+            self._shown = t               # a jump (seek): follow it at once
+        else:
+            self._shown = max(self._shown, t)   # never step backwards when a report arrives a little late
+        self.editor.wave.playhead = self._shown
+        self.editor.wave.update()
+
     def on_position(self, t: float):
         if self.editor.clip.source == "isolated":
             self._update_playing_source()
-        self.editor.wave.playhead = t
-        self.editor.wave.update()
+        self._pos_t, self._pos_wall, self._shown = t, time.monotonic(), (t if self.player.paused else self._shown)
+        if not (self._smooth and self._glide.isActive()):
+            self.editor.wave.playhead = t
+            self.editor.wave.update()
         if not self.slider.isSliderDown():
             self.slider.setValue(int(t / self.duration() * 100000))
         self.transcript_panel.follow(t, scroll=not self.player.paused)  # paused: a click or scrub must not move the list
         self.update_time_label()
 
     def _paused_changed(self, paused: bool):
+        self._pos_t, self._pos_wall, self._shown = self.player.pos, time.monotonic(), self.player.pos
+        self._glide_check()
         self.btn_play.setText("▶ Play" if paused else "❚❚ Pause")
         self.update_time_label()
 

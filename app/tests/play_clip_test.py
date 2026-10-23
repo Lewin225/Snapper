@@ -3,6 +3,7 @@
 usage: python tests/play_clip_test.py EPISODE.mkv   (needs the display/GL environment from run.sh)
 """
 import locale
+import time
 import sys
 from pathlib import Path
 
@@ -11,6 +12,7 @@ import os, tempfile
 os.environ.setdefault("SNAPPER_DATA", tempfile.mkdtemp())   # tests never touch the real projects
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from PySide6.QtCore import QSettings
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QPushButton
 
@@ -42,5 +44,29 @@ for _ in range(80):   # mpv in a test window can be slow to start: wait for it t
 print(f"Play from In: paused={win.player.paused} pos={win.player.pos:.3f}")
 assert not win.player.paused and win.player.pos > 42.9, "Play from In must not stop at the out marker"
 win.player.stop()
+# playhead motion: Accurate steps with mpv's reports (once per video frame); Smooth moves on every screen refresh
+def distinct_positions(ms=1500):
+    seen, end = set(), time.monotonic() + ms / 1000
+    while time.monotonic() < end:
+        QTest.qWait(2)
+        seen.add(round(win.editor.wave.playhead, 5))
+    return len(seen)
+win.set_range(40.0, 60.0)
+win.player.play_range(40.0, 60.0)
+QTest.qWait(800)
+win.set_playhead_motion("accurate")
+accurate = distinct_positions()
+win.set_playhead_motion("smooth")
+smooth = distinct_positions()
+assert win._glide.isActive() and abs(win.editor.wave.playhead - win.player.pos) < 0.4, (win.editor.wave.playhead, win.player.pos)
+win.player.stop()
+for _ in range(40):   # the seek back to where playback started reports its position a moment later
+    QTest.qWait(50)
+    if abs(win.editor.wave.playhead - win.player.pos) < 1e-6:
+        break
+assert not win._glide.isActive() and abs(win.editor.wave.playhead - win.player.pos) < 1e-6, ("paused: exactly where mpv is", win._glide.isActive(), win.editor.wave.playhead, win.player.pos)
+assert win.act_motion["smooth"].isChecked() and QSettings("snapper", "snapper").value("playhead/motion") == "smooth"
+print(f"ok   playhead motion: {accurate} distinct positions in 1.5 s while Accurate, {smooth} while Smooth")
+assert smooth > accurate * 2, (accurate, smooth)   # video 24-30 fps; the screen is 60 Hz or more
 print("PLAY CLIP OK")
 win.close()

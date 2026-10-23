@@ -253,7 +253,9 @@ class VideoWidget(QOpenGLWidget):
             self.ctx.update()  # required before every render: lets mpv advance to the next video frame
             r = self.devicePixelRatio()
             self.ctx.render(opengl_fbo={"w": int(self.width() * r), "h": int(self.height() * r),
-                                        "fbo": self.defaultFramebufferObject()}, flip_y=True)
+                                        "fbo": self.defaultFramebufferObject()}, flip_y=True,
+                            block_for_target_time=False)   # do not sleep in here until the frame is due: that stalls the
+            # whole UI thread (the playhead, the lists) to the video's frame rate; mpv follows the audio clock anyway
 
     def closeEvent(self, e):
         if self.ctx:
