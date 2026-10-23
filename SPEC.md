@@ -129,7 +129,7 @@ Bake-off on a 10-minute section of a real episode (RTX 3080 Ti, container capped
 
 ## Stack decision (spike passed)
 
-**Qt 6 with Python (PySide6), libmpv for video, models in a separate subprocess.** `spike/` proves the core editor: video, scrubbing, and a fine-adjust waveform with draggable in/out handles. The user judged scrubbing "fast enough".
+**Qt 6 with Python (PySide6), libmpv for video, models in a separate subprocess.** An early prototype (since replaced by `app/`, and removed from the repo) proved the core editor: video, scrubbing, and a fine-adjust waveform with draggable in/out handles. The user judged scrubbing "fast enough".
 
 - **Scrubbing needs a proxy.** Playing the original (1080p 10-bit HEVC) is too coarse: cheap seeks land on keyframes. Generate a 480p all-intra H.264 proxy in the background on open (ffmpeg x264, `-g 1 -crf 34`, audio copied; ~45 s and ~0.5 GB for a 33-minute episode) and cache it. Use the original until it is ready. Video is a viewing aid, so proxy quality does not matter.
 - **Latest-wins seeking while dragging.** Keep only the newest target and issue the next seek when the previous finishes. Never queue seeks.
