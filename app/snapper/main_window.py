@@ -226,6 +226,12 @@ class MainWindow(QMainWindow):
         self.project.value_renamed.connect(self._renamed)
         self.project.dirty.connect(self._schedule_save)
         self._save_timer = QTimer(self, singleShot=True, interval=800, timeout=self.project.save)
+        self.project.before_save = self._capture_state
+        self._saved_position = self.project.position
+        self._restoring = False   # the video is still going back to the saved position
+        # while playing, where you are is saved now and then (a crash loses at most a few seconds of position)
+        self._position_timer = QTimer(self, interval=5000, timeout=self._save_position)
+        self._position_timer.start()
         self._key_filter = KeyFilter(self)
         QApplication.instance().installEventFilter(self._key_filter)
 
@@ -385,7 +391,13 @@ class MainWindow(QMainWindow):
             if tp.exists():
                 self.set_transcript(Transcript.load(tp), persist=True)
         saved = next((c for c in self.project.clips if c.id == self.project.selected_clip), None)
+        if saved is None and self.project.pending:   # the clip that was being cut, not saved yet, comes back as it was
+            self.pending = Clip.from_json({**self.project.pending, "id": None})
         self.edit(saved or self.pending)
+        if self.project.position > 0.5:              # and the video is where it was left
+            self._restoring = True
+            self.player.restarted.connect(self._restored)
+            self.player.seek(min(self.project.position, self.info.duration))
         self.transcript_area.refresh()
 
     # ------------------------------------------------------------------ scrub proxy
@@ -1372,6 +1384,8 @@ class MainWindow(QMainWindow):
         self.update_time_label()
 
     def _paused_changed(self, paused: bool):
+        if paused and self.player.duration and not self._scrubbing:
+            self._schedule_save()   # stopping is a good moment to remember where you are
         if self._scrubbing:   # the drag starts and stops playback itself: no flicker of the button, the glide timer or the playhead
             return
         self._pos_t, self._pos_wall, self._shown = self.player.pos, time.monotonic(), self.player.pos
@@ -1462,6 +1476,22 @@ class MainWindow(QMainWindow):
 
     def _schedule_save(self):
         self._save_timer.start()
+
+    def _capture_state(self):
+        """Just before the project is saved: where the playhead is, and the clip being cut that is not in the library yet."""
+        if self.player.duration and not self._restoring:   # not before the saved position has been gone back to
+            self.project.position = self.player.now()
+        p = self.pending
+        self.project.pending = p.to_json() if (p.start is not None or p.end is not None or p.tags) else None
+        self._saved_position = self.project.position
+
+    def _restored(self):
+        self.player.restarted.disconnect(self._restored)
+        self._restoring = False
+
+    def _save_position(self):
+        if self.player.duration and abs(self.player.now() - self._saved_position) > 1.0:
+            self.project.save()
 
     def closeEvent(self, e):
         QApplication.instance().removeEventFilter(self._key_filter)

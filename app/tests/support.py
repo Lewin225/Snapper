@@ -1,9 +1,12 @@
 """Helpers shared by the GUI tests."""
+import os
 import sys
 import tempfile
 from pathlib import Path
 
 from PySide6.QtTest import QTest
+
+os.environ.setdefault("SNAPPER_NO_WARP", "1")   # tests send made-up mouse events: the real pointer is left alone
 
 MEDIA = Path(__file__).parent / "media"
 VIDEO = MEDIA / "tears_of_steel.mp4"      # the default test video (CC BY 3.0), fetched by fetch_media.sh, with WhisperX subtitles embedded
@@ -86,6 +89,7 @@ def reset(win):
     pr.tag_kinds["character"] = STRING
     pr.tag_values.clear()
     pr.export_settings = None
+    pr.position, pr.pending = 0.0, None
     pr.auto_export = False
     pr.structure_changed.emit()
     win.pending = Clip()

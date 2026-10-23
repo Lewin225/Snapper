@@ -117,6 +117,70 @@ QTest.qWait(600)
 assert win.player.paused
 print("ok   a drag that started paused leaves it paused")
 
+# --- endless dragging: the pointer is put back after every move, so a drag can go on past the edge of the screen
+class Pointer:
+    """Stands in for the pointer and the warp. `virt` is where the pointer is on screen: the hand moves it, a warp puts it back
+    at the anchor, and (as on X11) the system then reports it there."""
+    def __init__(self, sync=True, allowed=True):
+        self.warps, self.sync, self.allowed, self.virt = [], sync, allowed, QPointF()
+    def report(self):
+        local = QPointF(wave.mapFromGlobal(self.virt.toPoint()))
+        QApplication.sendEvent(wave, QMouseEvent(QEvent.MouseMove, local, self.virt, Qt.NoButton, Qt.LeftButton, Qt.NoModifier))
+    def warp(self, pos):
+        self.warps.append((pos.x(), pos.y()))
+        if not self.allowed:
+            return False
+        self.virt = QPointF(pos)
+        if self.sync:
+            self.report()
+        return True
+
+def endless_drag(pointer, per_event=3, n=900):
+    win.player.mpv.pause = True
+    win.player.seek(400.0)
+    QTest.qWait(600)
+    wave.relative.warp = pointer.warp
+    spp = secs_per_px()
+    press(x0)
+    pointer.virt = QPointF(wave.mapToGlobal(QPointF(x0, Y).toPoint()))
+    for _ in range(n):                                  # the hand keeps moving: the warps keep the pointer near its anchor
+        pointer.virt += QPointF(per_event, 0)
+        pointer.report()
+    shown = wave.playhead
+    cursor = wave.cursor().shape()
+    release(int(wave.mapFromGlobal(pointer.virt.toPoint()).x()))
+    return 400.0, shown, spp, pointer.warps, cursor
+
+start_t, shown, spp, warps, cursor = endless_drag(Pointer(), per_event=-3)
+want = start_t + 3 * 900 * spp                          # 2700 px of hand movement, far more than the waveform is wide
+assert 2700 > wave.width() and abs(shown - want) < 0.5, (shown, want)
+assert len(warps) > 800 and len(set(warps[:-1])) == 1, "the pointer is put back at the same anchor after the moves"
+assert cursor == Qt.BlankCursor and wave.cursor().shape() != Qt.BlankCursor, "hidden while dragging, shown again after"
+assert wave.relative.warp and not wave.relative.active
+print(f"ok   endless drag: 2700 px of movement through a {wave.width()} px waveform, the pointer held at its anchor and hidden")
+
+start_t, shown, spp, warps, cursor = endless_drag(Pointer(sync=False), per_event=-3)
+assert abs(shown - (start_t + 3 * 900 * spp)) < 0.5 + 8 * 3 * spp, "also where the system sends no report for a warp"
+print("ok   the same where a warp is not answered with a report")
+
+win.player.mpv.pause = True
+win.player.seek(400.0)
+QTest.qWait(600)
+ptr = Pointer(allowed=False)                            # a native Wayland window: the pointer cannot be moved
+wave.relative.warp = ptr.warp
+spp = secs_per_px()
+press(x0)
+ptr.virt = QPointF(wave.mapToGlobal(QPointF(x0, Y).toPoint()))
+for _ in range(100):
+    ptr.virt += QPointF(1, 0)                           # an absolute drag: the pointer travels
+    ptr.report()
+shown = wave.playhead
+release(x0 + 100)
+assert abs(shown - (400.0 - 100 * spp)) < 0.3 and len(ptr.warps) == 1, (shown, 400.0 - 100 * spp, len(ptr.warps))
+print("ok   where the pointer cannot be moved the drag is an ordinary one (one refused warp, then none)")
+from snapper.drag import _warp
+wave.relative.warp = _warp   # (refuses under SNAPPER_NO_WARP, which the tests set)
+
 # --- a click still moves the playhead
 t_click = wave._t(x0 + 150, *wave.view())
 press(x0 + 150); release(x0 + 150)

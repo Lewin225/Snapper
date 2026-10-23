@@ -72,5 +72,44 @@ d = json.loads(pf.read_text()); d["video"] = "/nonexistent/old/place.mkv"; d["vi
 pf.write_text(json.dumps(d))
 assert Project.from_file(pf).media.name == episode.name and Project.from_file(pf).media.exists()
 print("ok   a moved video is found again through the relative path")
-win2.close()
+
+# --- where you left off: the playhead, the open clip, or the clip that was being cut and is not in the library yet
+def reopen(old):
+    old.project.save()
+    w = MainWindow(proj_file)
+    w.show()
+    old.close()          # (the new window is up first: the last window closing would end the application)
+    wait_until_ready(w, settle_ms=1500)
+    QTest.qWait(1000)    # the saved position is gone back to
+    return w
+
+win2.edit(win2.project.clips[1])                  # a saved clip is open and the playhead is somewhere else
+win2.player.seek(150.0)
+QTest.qWait(1200)
+win3 = reopen(win2)
+assert win3.editor.clip.id == clip2.id and abs(win3.player.now() - 150.0) < 0.6, (win3.editor.clip.id, win3.player.now())
+print("ok   reopened: the same clip is open and the video is where it was left (not at the clip's start)")
+
+win3.deselect_clip()                              # a clip being cut, not saved to the library yet
+win3.set_range(200.0, 203.5, "half done")
+win3.editor.set_tag("character", "Zed")
+win3.player.seek(230.0)
+QTest.qWait(1200)
+assert win3.project.clips and win3.editor.clip.id is None
+win4 = reopen(win3)
+c = win4.editor.clip
+assert c.id is None and c.start == 200.0 and c.end == 203.5 and c.text == "half done" and c.tags.get("character") == "Zed", c
+assert abs(win4.player.now() - 230.0) < 0.6 and len(win4.project.clips) == 2
+assert abs(win4.editor.wave.sel_in - 200.0) < 1e-6
+print("ok   reopened: the clip being cut (range, text, tags) and the playhead come back")
+
+win4.deselect_clip()                              # nothing to restore: a clean start
+win4.set_range(None, None, "")
+win4.pending.tags.clear()
+win4.player.seek(0.2)
+QTest.qWait(1200)
+win5 = reopen(win4)
+assert win5.editor.clip.start is None and win5.player.now() < 1.0 and win5.project.pending is None
+print("ok   with nothing in progress, a reopened project starts clean")
+win5.close()
 print("PROJECT OK")

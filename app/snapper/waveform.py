@@ -10,6 +10,7 @@ from PySide6.QtCore import QEvent, QLineF, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPalette, QPen, QPixmap
 from PySide6.QtWidgets import QWidget
 
+from .drag import RelativeDrag
 from .media import RATE
 
 WORD_BAND = 18  # px at the top reserved for word labels
@@ -42,6 +43,7 @@ class WaveformWidget(QWidget):
         self.view_offset = 0.0              # seconds the view is panned away from the selection (left-drag with a clip selected)
         self._pan: Optional[dict] = None    # a left press that may turn into a drag
         self._rsel: Optional[dict] = None   # a right press: waiting for the hold, then selecting
+        self.relative = RelativeDrag(self)   # endless left-drags (scrubbing, panning)
         self._hold = QTimer(self, singleShot=True, interval=SELECT_HOLD_MS, timeout=self._hold_elapsed)
         self._frozen: Optional[tuple[float, float]] = None
         self._key = None
@@ -235,7 +237,8 @@ class WaveformWidget(QWidget):
         # a click moves the playhead; a drag pans: it scrubs while no clip is selected (the view follows the playhead) and
         # offsets the view while one is
         self._pan = {"x0": x, "t0": self._t(x, a, b), "playhead0": self.playhead, "off0": self.view_offset,
-                     "spp": (b - a) / max(self.width(), 1), "moved": False, "follow": self.sel_in is None}
+                     "spp": (b - a) / max(self.width(), 1), "moved": False, "follow": self.sel_in is None,
+                     "global0": e.globalPosition(), "dx": 0.0}
 
     def _hold_elapsed(self):
         if self._rsel and self._rsel["state"] == "wait":
@@ -262,14 +265,17 @@ class WaveformWidget(QWidget):
             return
         if self._pan:
             p = self._pan
-            dx = x - p["x0"]
             if not p["moved"]:
-                if abs(dx) < DRAG_PX:
+                if abs(x - p["x0"]) < DRAG_PX:
                     return
                 p["moved"] = True
-                self.setCursor(Qt.ClosedHandCursor)
+                p["dx"] = x - p["x0"]
+                self.relative.start(p["global0"], e.globalPosition())   # from here on the pointer is read as movement only
                 if p["follow"]:
                     self.scrubbing.emit(True)
+            else:
+                p["dx"] += self.relative.step(e.globalPosition())[0]
+            dx = p["dx"]
             if p["follow"]:
                 self.playhead = min(max(p["playhead0"] - dx * p["spp"], 0.0), self.dur)
                 self.scrub_requested.emit(self.playhead)
@@ -298,6 +304,7 @@ class WaveformWidget(QWidget):
                 self.seek_requested.emit(p["t0"])   # a click
             elif p["follow"]:
                 self.scrubbing.emit(False)   # the host goes to the exact moment where the drag ended
+        self.relative.finish()
         self.unsetCursor()
         self._drag = self._frozen = None
         self.update()

@@ -68,6 +68,9 @@ class Project(QObject):
         self.auto_export = False                     # export clips as soon as they are created or changed
         self.proxy_enabled = True                    # use (and generate) the fast-scrubbing proxy video
         self.selected_clip: Optional[int] = None     # id of the clip open in the editor, if any
+        self.position = 0.0                          # where the playhead was when the project was last saved
+        self.pending: Optional[dict] = None          # the clip being cut but not saved yet (start/end/text/tags), if any
+        self.before_save = None                      # called just before saving, so the window can fill in the two above
         self.transcript_source: Optional[str] = None
         self.transcript: Optional[list[dict]] = None  # the transcript lines (with word times), kept with the project
         self.export_settings: Optional[dict] = None   # see export.ExportSettings; None until the user sets it up
@@ -108,6 +111,8 @@ class Project(QObject):
         self.proxy_enabled = d.get("proxy_enabled", True)
         self.auto_export = bool(d.get("auto_export", False))
         self.selected_clip = d.get("selected_clip")
+        self.position = float(d.get("position") or 0.0)
+        self.pending = d.get("pending")
         self.transcript = d.get("transcript")
         self.transcript_source = d.get("transcript_source")   # "whisperx:original" / "whisperx:processed", else not WhisperX
         self.export_settings = d.get("export_settings")
@@ -121,6 +126,8 @@ class Project(QObject):
                 c.tags[f] = True
 
     def save(self):
+        if self.before_save:
+            self.before_save()
         tmp = self.path.with_name(self.path.name + ".tmp")
         try:
             rel = os.path.relpath(self.media.resolve(), self.path.resolve().parent)
@@ -130,6 +137,7 @@ class Project(QObject):
             "version": 2, "video": str(self.media.resolve()), "video_rel": rel, "proxy_enabled": self.proxy_enabled,
             "auto_export": self.auto_export,
             "audio_track": self.audio_track, "selected_clip": self.selected_clip,
+            "position": round(self.position, 3), "pending": self.pending,
             "tag_types": self.tag_types, "tag_kinds": self.tag_kinds, "tag_values": self.tag_values,
             "next_id": self._next_id, "clips": [c.to_json() for c in self.clips],
             "transcript": self.transcript, "transcript_source": self.transcript_source, "export_settings": self.export_settings}, indent=1))
