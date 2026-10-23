@@ -36,6 +36,7 @@ class Engine:
     after_note: str                  # what else happens on first use
     min_free_gb: int
     purpose: str                     # one sentence: what it is for
+    no_deps_packages: list[str] = field(default_factory=list)   # installed first with --no-deps (the rest are then its dependencies)
 
     @property
     def folder(self) -> Path:
@@ -76,10 +77,19 @@ WHISPERX = Engine(
     after_note="The first transcript then downloads the speech model (about 3 GB). On a CPU, transcribing is many times slower.",
     min_free_gb=12, purpose="writes transcripts")
 
+# audio-separator 0.47.1's own requirements, except `diffq`: that is only imported by the Demucs models, which Snapper does not
+# use (BS-Roformer and MDX are), and it has no wheel for Python 3.13 on Linux, so installing it needs a C++ compiler that a Flatpak
+# does not have. So audio-separator goes in with --no-deps and these are installed beside it.
+_SEPARATOR_DEPS = ['audioop-lts>=0.2.1; python_version >= "3.13"', "beartype<0.19.0,>=0.18.5", "einops>=0.7", "julius>=0.2",
+                   "librosa>=0.10", "ml_collections", "numpy>=2", "onnx-weekly", "onnx2torch-py313>=1.6", "packaging",
+                   "pydub>=0.25", "pyyaml", "requests>=2", "resampy>=0.4", "rotary-embedding-torch<0.7.0,>=0.6.1",
+                   "samplerate==0.1.0", "scipy<2.0.0,>=1.13.0", "six>=1.16", "soundfile>=0.12", "torch<3,>=2.3", "tqdm"]
+
 SEPARATOR = Engine(
     key="separator", title="audio-separator",
     modules={"audio_separator": "audio-separator", "torch": "PyTorch", "onnxruntime": "ONNX Runtime"},
-    gpu_packages=["audio-separator[gpu]==0.47.1"], cpu_packages=["audio-separator[cpu]==0.47.1"],
+    no_deps_packages=["audio-separator==0.47.1"],
+    gpu_packages=_SEPARATOR_DEPS + ["onnxruntime-gpu>=1.17"], cpu_packages=_SEPARATOR_DEPS + ["onnxruntime>=1.17"],
     cpu_pip_args=CPU_TORCH,
     env_var="SNAPPER_SEP_PYTHON", dev_env="~/envs/sep",
     download_note={"gpu": "about 5 GB (PyTorch and ONNX Runtime with their CUDA libraries)",
@@ -240,6 +250,7 @@ class EngineInstaller(QObject):
         self._tail: list[str] = []
         self._cancelled = False
         self._step = 0
+        self._nodeps_done = False
         self._python: Optional[Path] = None
 
     def start(self):
@@ -278,19 +289,25 @@ class EngineInstaller(QObject):
 
     def _next(self):
         self._step += 1
-        names = ", ".join(p.split("==")[0] for p in self.engine.pip_packages(self.device))
         if self._step == 1:
             self.stage.emit("Creating a Python environment for Snapper…")
             self._run(sys.executable, ["-m", "venv", str(self.engine.folder)])
         elif self._step == 2:
             where = "your system Python" if self.target == "system" else "Snapper's environment"
-            self.stage.emit(f"Downloading and installing {names} into {where} (this takes a while)…")
+            self.stage.emit(f"Downloading and installing {self.engine.title} into {where} (this takes a while)…")
             args = ["-m", "pip", "install", "--no-cache-dir", "--progress-bar", "off", "--no-input"]
             if self.target == "system":
                 args.append("--user")        # into ~/.local, never into the system's own folders
                 if self.break_system:
                     args.append("--break-system-packages")
-            self._run(str(self._python), args + self.engine.pip_args(self.device) + self.engine.pip_packages(self.device))
+            packages = self.engine.pip_packages(self.device)
+            if self.engine.no_deps_packages and not self._nodeps_done and packages == list(
+                    self.engine.gpu_packages if self.device == "gpu" else self.engine.cpu_packages):
+                self._nodeps_done = True
+                self._step = 1              # when this pip run is over, _next comes back here for the dependencies
+                self._run(str(self._python), args + ["--no-deps"] + self.engine.no_deps_packages)
+                return
+            self._run(str(self._python), args + self.engine.pip_args(self.device) + packages)
         elif self._step == 3:
             self.stage.emit("Checking the installation…")
             st = check(self.engine, self._python, self.target if self.target == "system" else "snapper")
