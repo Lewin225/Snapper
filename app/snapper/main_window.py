@@ -340,6 +340,7 @@ class MainWindow(QMainWindow):
         group = QActionGroup(self)
         self.act_scrub_mode = {}
         for key, text in (("tape", "Tape (the audio under the cursor, at the speed you drag)"),
+                          ("granular", "Granular (the same, but the pitch stays put)"),
                           ("chunks", "Playback (short pieces of the video's audio)"),
                           ("off", "Muted")):
             act = QAction(text, self, checkable=True)
@@ -1023,14 +1024,15 @@ class MainWindow(QMainWindow):
         self._scrub_held = False
         if on:
             self._scrub_resume = not self.player.paused
-            self._scrub_kind = "chunks" if self._scrub_mode == "tape" and not TapeScrub.available() else self._scrub_mode
+            self._scrub_kind = "chunks" if self._scrub_mode in ("tape", "granular") and not TapeScrub.available() \
+                else self._scrub_mode
             if self._scrub_kind == "chunks":
                 self._scrub_idle.start()
             else:   # tape or muted: the video stops for the drag (it plays on at the end) and the sound is not mpv's
                 if self._scrub_resume:
                     self.player.mpv.pause = True
-                if self._scrub_kind == "tape":
-                    self._begin_tape()
+                if self._scrub_kind in ("tape", "granular"):
+                    self._begin_tape(self._scrub_kind == "granular")
         else:
             self.tape.end()
             self._scrub_idle.stop()
@@ -1049,14 +1051,16 @@ class MainWindow(QMainWindow):
                 self.player.mpv.pause = False
             self._scrub_idle.start()
 
-    def _begin_tape(self):
+    def _begin_tape(self, granular: bool = False):
         wave = self.editor.wave
         t = wave.playhead
-        self.tape.begin(t, wave.samples, wave.iso_samples, self.isolated_upto(), self.editor.clip.source == "isolated")
+        self.tape.begin(t, wave.samples, wave.iso_samples, self.isolated_upto(), self.editor.clip.source == "isolated",
+                        granular)
 
     def set_scrub_mode(self, mode: str, save: bool = True):
         """What is heard while the waveform is dragged: tape (the samples under the cursor at the cursor's speed, backwards
-        too), playback (mpv plays short pieces after each seek) or nothing."""
+        too), granular (the same in short pieces at normal pitch), playback (mpv plays short pieces after each seek) or
+        nothing."""
         self._scrub_mode = mode if mode in self.act_scrub_mode else "tape"
         self.act_scrub_mode[self._scrub_mode].setChecked(True)
         if save:

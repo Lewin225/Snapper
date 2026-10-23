@@ -19,6 +19,9 @@ MAX_SPEED = 12.0    # times normal speed, either way
 GAIN = 0.8
 FADE = 0.06         # seconds to let the sound die away when the drag ends
 STILL = 0.04        # speed (times normal) below which nothing is heard
+GRAIN = 0.05        # granular: seconds per grain...
+HOP = 0.0125        # ...and between grains (4 overlap, so the Hann windows add up to a steady level)
+SEARCH = 0.006      # a grain may start this much earlier or later than the cursor says, to line up with the one before
 
 
 class TapeVoice:
@@ -31,9 +34,14 @@ class TapeVoice:
         self.speed = 0.0                                  # times normal speed
         self.level = 0.0                                  # 0..1, the fade at the start and end of a drag
         self.ending = False
+        self.granular = False                             # short overlapping pieces at normal pitch, not a varispeed
+        self._grains: list = []                           # [array, first sample, how many of its samples are played]
+        self._until_grain = 0                             # output frames until the next grain starts
+        self._last: Optional[tuple] = None                # (array, first sample) of the newest grain
 
-    def begin(self, t: float, main, iso, iso_upto: float, use_iso: bool):
+    def begin(self, t: float, main, iso, iso_upto: float, use_iso: bool, granular: bool = False):
         self.sources = (main, iso, iso_upto, use_iso)
+        self.granular, self._grains, self._until_grain, self._last = granular, [], 0, None
         self.pos = self.target = t * RATE
         self.speed, self.level, self.ending = 0.0, 0.0, False
 
@@ -45,6 +53,49 @@ class TapeVoice:
         if use_iso and iso is not None and self.pos / RATE < upto - 1.0:
             return iso
         return main
+
+    def _aligned(self, arr, first: int, hop: int) -> int:
+        """Where a grain wanted at `first` should start so that it carries on the previous grain's wave (as that grain
+        would have gone on after `hop` frames) instead of cancelling it: the best match within SEARCH either way."""
+        if self._last is None or self._last[0] is not arr:
+            return first
+        s, L = int(SEARCH * RATE), hop
+        prev = self._last[1] + hop
+        lo, hi = first - s, first + s + L
+        if lo < 0 or hi > len(arr) or prev + L > len(arr):
+            return first
+        want = np.asarray(arr[prev:prev + L], dtype=np.float32)
+        seg = np.asarray(arr[lo:hi], dtype=np.float32)
+        corr = np.correlate(seg, want, "valid")                       # one score per offset
+        energy = np.sqrt(np.convolve(seg * seg, np.ones(L, np.float32), "valid")) + 1.0
+        return lo + int(np.argmax(corr / energy))
+
+    def _granular(self, arr, idx: np.ndarray, n: int) -> np.ndarray:
+        """Pieces of the audio at the cursor, each played at normal speed (so the pitch stays) and started every HOP
+        output frames from wherever the cursor is then: faster cursor = pieces skipped, slower = pieces repeated."""
+        g, hop = int(GRAIN * self.out_rate), int(HOP * self.out_rate)
+        win = np.hanning(g + 2)[1:-1].astype(np.float32) * 0.5   # 4 overlapping Hann windows add up to 2
+        out = np.zeros(n, np.float32)
+        t = self._until_grain
+        while t < n:
+            centre = int(idx[t]) - int(g * RATE / self.out_rate) // 2
+            first = self._aligned(arr, int(np.clip(centre, 0, max(0, len(arr) - g - 1))), hop)
+            self._grains.append([arr, first, 0, t])
+            self._last = (arr, first)
+            t += hop
+        self._until_grain = t - n
+        alive = []
+        for gr in self._grains:
+            src, first, played, at = gr
+            k = min(g - played, n - at)
+            if k > 0:
+                piece = np.asarray(src[first + played:first + played + k], dtype=np.float32)
+                out[at:at + len(piece)] += piece * win[played:played + len(piece)]
+            gr[2], gr[3] = played + max(k, 0), 0
+            if gr[2] < g:
+                alive.append(gr)
+        self._grains = alive
+        return out * (GAIN / 32768.0)
 
     def render(self, n: int) -> np.ndarray:
         arr = self._array()
@@ -58,11 +109,14 @@ class TapeVoice:
         steps = speeds * (RATE / self.out_rate)
         idx = self.pos + np.cumsum(steps)
         self.pos, self.speed = float(np.clip(idx[-1], 0, len(arr) - 2)), v1
-        i0 = np.clip(np.floor(idx).astype(np.int64), 0, len(arr) - 2)
-        frac = (idx - i0).astype(np.float32)
-        a = np.asarray(arr[i0], dtype=np.float32)
-        b = np.asarray(arr[i0 + 1], dtype=np.float32)
-        s = (a + (b - a) * np.clip(frac, 0, 1)) * (GAIN / 32768.0)
+        if self.granular:
+            s = self._granular(arr, idx, n)
+        else:
+            i0 = np.clip(np.floor(idx).astype(np.int64), 0, len(arr) - 2)
+            frac = (idx - i0).astype(np.float32)
+            a = np.asarray(arr[i0], dtype=np.float32)
+            b = np.asarray(arr[i0 + 1], dtype=np.float32)
+            s = (a + (b - a) * np.clip(frac, 0, 1)) * (GAIN / 32768.0)
         amp = np.clip(np.abs(speeds) / STILL, 0.0, 1.0).astype(np.float32)   # nothing when still, no click on the way in
         moved = dt / (FADE if self.ending else 0.005)   # the fade in at the start of a drag, and out at the end
         level1 = float(np.clip(self.level + (-moved if self.ending else moved), 0.0, 1.0))
@@ -116,13 +170,13 @@ class TapeScrub:
     def available() -> bool:
         return _pulse() is not None
 
-    def begin(self, t: float, main, iso, iso_upto: float, use_iso: bool) -> bool:
+    def begin(self, t: float, main, iso, iso_upto: float, use_iso: bool, granular: bool = False) -> bool:
         """Starts sounding at time t. False when there is no PulseAudio library or no samples (the drag is then silent)."""
         if main is None or not self.available():
             return False
         if self._thread is not None and self._thread.is_alive():
             self._thread.join(0.5)   # the previous drag is still fading out: let it finish
-        self.voice.begin(t, main, iso, iso_upto, use_iso)
+        self.voice.begin(t, main, iso, iso_upto, use_iso, granular)
         self.active = True
         self._thread = threading.Thread(target=self._run, name="tape-scrub", daemon=True)
         self._thread.start()

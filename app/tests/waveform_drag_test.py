@@ -161,6 +161,21 @@ v.ending = True
 assert np.abs(run(v, 0.2, lambda t: 6.0)[-2000:]).max() < 1e-4
 print("ok   a still cursor is silent (the sound dies away, no click)")
 
+def pitch(sig):
+    w = np.abs(np.fft.rfft(sig * np.hanning(len(sig))))
+    return np.argmax(w) * RATE / len(sig)
+
+for speed in (1.0, 2.0, 0.5, -1.5):                          # granular: the pitch stays, whatever the speed
+    v = TapeVoice(); v.begin(10.0, tone, None, 0.0, False, granular=True)
+    g = run(v, 1.2, lambda t: 10.0 + speed * t)
+    assert abs(pitch(g[RATE // 2:RATE // 2 + 16384]) - 440) < 30, (speed, pitch(g[RATE // 2:RATE // 2 + 16384]))
+    assert 0.1 < np.abs(g[RATE // 2:]).max() < 0.5, (speed, np.abs(g[RATE // 2:]).max())
+v = TapeVoice(); v.begin(5.0, tone, None, 0.0, False, granular=True)
+run(v, 0.5, lambda t: 5.0 + t)
+still = run(v, 1.5, lambda t: 6.0)
+assert np.abs(still[-RATE // 2:]).max() < 1e-4, "granular is silent when the cursor is still too"
+print("ok   granular scrub: the pitch stays at 440 Hz at 1x, 2x, 0.5x and backwards; silent when still")
+
 iso = (tone // 4)
 v.begin(3.0, tone, iso, 8.0, True)                            # processed audio where it exists, the original beyond
 assert v._array() is iso
@@ -169,7 +184,7 @@ assert v._array() is tone
 print("ok   the processed audio is used where it exists, the original beyond it")
 
 # the drag: tape and muted modes stop the video for the drag and play on after; playback mode is above
-for mode in ("tape", "off"):
+for mode in ("tape", "granular", "off"):
     win.set_scrub_mode(mode, save=False)
     win.player.seek(100.0)
     win.player.mpv.pause = False
@@ -178,7 +193,8 @@ for mode in ("tape", "off"):
     move(x0 + 60, steps=6)
     QTest.qWait(150)
     assert win.player.paused, f"{mode}: the video is stopped while the waveform is dragged"
-    assert (win.tape.active and win.tape.voice.target > 0) == (mode == "tape")
+    assert (win.tape.active and win.tape.voice.target > 0) == (mode != "off")
+    assert win.tape.voice.granular == (mode == "granular") or mode == "off"
     here = wave.playhead
     release(x0 + 60)
     QTest.qWait(700)
