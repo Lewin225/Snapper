@@ -17,7 +17,7 @@ from . import media, system_check
 from . import export as exporting
 from .export_dialog import ExportSettingsDialog
 from .pathnames import INVALID_HELP, VALID_INPUT_PATTERN, clean_tag
-from . import engine, engine_dialog, isolation, launcher, recent
+from . import desktop, engine, engine_dialog, isolation, launcher, recent
 from .progress import JobBars, ProxyBanner
 from .tape_scrub import TapeScrub
 from .titles import section_title
@@ -296,6 +296,8 @@ class MainWindow(QMainWindow):
         self.menu_recent = f.addMenu("Open &recent")
         self.menu_recent.aboutToShow.connect(self._fill_recent_menu)
         self._action(f, "Save project &as…", self.save_project_as)
+        f.addSeparator()
+        self._action(f, "Open the folder of installed &environments", self.open_engines_folder)
         f.addSeparator()
         self._action(f, "&Quit", self.close, QKeySequence.Quit)
         t = m.addMenu("&Transcript")
@@ -1057,6 +1059,16 @@ class MainWindow(QMainWindow):
         t = wave.playhead
         self.tape.begin(t, wave.samples, wave.iso_samples, self.isolated_upto(), self.editor.clip.source == "isolated",
                         granular)
+
+    def open_engines_folder(self):
+        """Shows where WhisperX and audio-separator are installed when Snapper installed them itself."""
+        folder = engine.WHISPERX.folder.parent
+        if not any(folder.glob("*/pyvenv.cfg")):
+            QMessageBox.information(self, "Installed environments",
+                                    "Snapper has not installed any environment of its own yet.\n\n"
+                                    f"They go in {folder}\nwhen you set up WhisperX or audio-separator.")
+            return
+        desktop.open_file(folder)
 
     def set_scrub_mode(self, mode: str, save: bool = True):
         """What is heard while the waveform is dragged: tape (the samples under the cursor at the cursor's speed, backwards

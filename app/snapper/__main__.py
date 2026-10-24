@@ -3,6 +3,7 @@ import os
 import sys
 from pathlib import Path
 
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from . import system_check
@@ -14,6 +15,10 @@ def main():
     os.environ.setdefault("QT_QPA_PLATFORMTHEME", "xdgdesktopportal")
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("snapper")
+    # On Wayland the window is matched to its launcher entry (name and icon) by this id, which is the Flatpak's app id; where
+    # Snapper is not installed as an application the bundled icon is used instead.
+    app.setDesktopFileName("io.github.Lewin225.Snapper")
+    app.setWindowIcon(QIcon.fromTheme("io.github.Lewin225.Snapper", QIcon(str(Path(__file__).with_name("snapper.svg")))))
     locale.setlocale(locale.LC_NUMERIC, "C")  # mpv requires it
     if missing := system_check.missing_requirements():   # before anything imports the player (which needs libmpv)
         from PySide6.QtWidgets import QMessageBox

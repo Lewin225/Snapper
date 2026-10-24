@@ -43,7 +43,7 @@ class WaveformWidget(QWidget):
         self.view_offset = 0.0              # seconds the view is panned away from the selection (left-drag with a clip selected)
         self._pan: Optional[dict] = None    # a left press that may turn into a drag
         self._rsel: Optional[dict] = None   # a right press: waiting for the hold, then selecting
-        self.relative = RelativeDrag(self)   # endless left-drags (scrubbing, panning)
+        self.relative = RelativeDrag(self, on_move=self._relative_moved)   # endless left-drags (scrubbing, panning)
         self._hold = QTimer(self, singleShot=True, interval=SELECT_HOLD_MS, timeout=self._hold_elapsed)
         self._frozen: Optional[tuple[float, float]] = None
         self._key = None
@@ -238,7 +238,7 @@ class WaveformWidget(QWidget):
         # offsets the view while one is
         self._pan = {"x0": x, "t0": self._t(x, a, b), "playhead0": self.playhead, "off0": self.view_offset,
                      "spp": (b - a) / max(self.width(), 1), "moved": False, "follow": self.sel_in is None,
-                     "global0": e.globalPosition(), "dx": 0.0}
+                     "global0": e.globalPosition(), "pos0": e.position(), "dx": 0.0}
 
     def _hold_elapsed(self):
         if self._rsel and self._rsel["state"] == "wait":
@@ -270,18 +270,12 @@ class WaveformWidget(QWidget):
                     return
                 p["moved"] = True
                 p["dx"] = x - p["x0"]
-                self.relative.start(p["global0"], e.globalPosition())   # from here on the pointer is read as movement only
+                self.relative.start(p["global0"], e.globalPosition(), p["pos0"])   # from here on the pointer is read as movement only
                 if p["follow"]:
                     self.scrubbing.emit(True)
             else:
                 p["dx"] += self.relative.step(e.globalPosition())[0]
-            dx = p["dx"]
-            if p["follow"]:
-                self.playhead = min(max(p["playhead0"] - dx * p["spp"], 0.0), self.dur)
-                self.scrub_requested.emit(self.playhead)
-            else:
-                self.view_offset = p["off0"] - dx * p["spp"]
-            self.update()
+            self._apply_pan()
             return
         if not self._drag:
             return
@@ -294,7 +288,24 @@ class WaveformWidget(QWidget):
         self.selection_edited.emit(self.sel_in, self.sel_out)
         self.update()
 
+    def _apply_pan(self):
+        p = self._pan
+        dx = p["dx"]
+        if p["follow"]:
+            self.playhead = min(max(p["playhead0"] - dx * p["spp"], 0.0), self.dur)
+            self.scrub_requested.emit(self.playhead)
+        else:
+            self.view_offset = p["off0"] - dx * p["spp"]
+        self.update()
+
+    def _relative_moved(self, dx: float, dy: float):
+        """The locked pointer moved (no mouse events come while it is locked)."""
+        if self._pan and self._pan["moved"]:
+            self._pan["dx"] += dx
+            self._apply_pan()
+
     def mouseReleaseEvent(self, e):
+        self.relative.flush()   # movement reported but not handed over yet counts
         if self._rsel and e.button() == Qt.RightButton:
             self._hold.stop()
             self._rsel = None

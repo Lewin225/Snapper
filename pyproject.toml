@@ -32,6 +32,9 @@ snapper = "snapper.__main__:main"
 [tool.setuptools]
 packages = ["snapper", "speech_backend", "isolation_backend"]
 
+[tool.setuptools.package-data]
+snapper = ["snapper.svg"]
+
 [tool.setuptools.package-dir]
 snapper = "app/snapper"
 speech_backend = "speech_backend"

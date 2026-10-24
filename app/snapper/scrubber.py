@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Optional
 
 from PySide6.QtCore import QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPen
+from PySide6.QtGui import QColor, QFont, QGuiApplication, QPainter, QPen
 from PySide6.QtWidgets import QLineEdit, QWidget
 
 from .drag import RelativeDrag
@@ -52,7 +52,7 @@ class TimeScrubber(QWidget):
         self._lo, self._hi = 0.0, 1e9
         self._drag_x: Optional[float] = None
         self._acc = 0.0
-        self.relative = RelativeDrag(self)   # endless dragging: the pointer is held in place while dragging
+        self.relative = RelativeDrag(self, on_move=self._relative_moved)   # endless dragging: the pointer is held in place
         self._hover = False
         self._edit: Optional[_InlineEdit] = None
         self.setFixedSize(132, 54)
@@ -123,7 +123,7 @@ class TimeScrubber(QWidget):
         if e.button() == Qt.LeftButton and self._value is not None and self._edit is None:
             self._drag_x = e.position().x()
             self._acc = 0.0
-            self.relative.start(e.globalPosition())   # the pointer is held in place: drag as far as you like
+            self.relative.start(e.globalPosition(), press=e.position())   # the pointer is held in place: drag as far as you like
             self.dragging.emit(True)
             self.update()
 
@@ -132,8 +132,13 @@ class TimeScrubber(QWidget):
             self.setCursor(Qt.SizeHorCursor if self._value is not None else Qt.ArrowCursor)
         if self._drag_x is None or self._value is None:
             return
-        dx = self.relative.step(e.globalPosition())[0]
-        mods = e.modifiers()
+        self._drag_by(self.relative.step(e.globalPosition())[0], e.modifiers())
+
+    def _relative_moved(self, dx: float, _dy: float):
+        if self._drag_x is not None and self._value is not None:
+            self._drag_by(dx, QGuiApplication.keyboardModifiers())
+
+    def _drag_by(self, dx: float, mods):
         rate = COARSE if mods & Qt.ShiftModifier else FINE if mods & Qt.ControlModifier else SECONDS_PER_PIXEL
         self._acc += dx * rate
         step = round(self._acc, 6)
