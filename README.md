@@ -1,5 +1,7 @@
 Snapper is a tool for quickly cutting hundreds of audio clips from a video
-It was part of my voicemod tools for games, but it's so useful on it's own I split it off
+
+It was part of my game tooling, but it's so useful on it's own I split it off
+
 * Wide format support via mpv
 * Rapid seeking with optional proxy generation
 * Seek and select by transcript, either from your video, or an external srt file
