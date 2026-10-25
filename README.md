@@ -1,5 +1,5 @@
 # Snapper
-Snapper is a tool for quickly cutting hundreds of audio clips from a video it was part of another project, but it's so useful on it's own I split it off
+Snapper is a tool for quickly cutting hundreds of audio clips from a video. It was part of another project, but it's so useful on it's own I split it off
 <img width="1630" height="1111" alt="Snapper — Ed, Edd n Eddy (1999) - S03E01 - Wish You Were Ed (1080p AI4K x265 ImE) mkv1" src="https://github.com/user-attachments/assets/22e6e745-a271-410c-82a4-6e14619dca32" />
 
 
