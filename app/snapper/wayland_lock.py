@@ -109,8 +109,14 @@ def _window_surface(window) -> Optional[int]:
     libc.dladdr.argtypes = [c_void_p, ctypes.POINTER(Dl)]
 
     def in_wayland_plugin(addr):
+        """Whether addr is in the QtWayland client library, or in its graphics plugin (a window with OpenGL content, such as the
+        video, is a QWaylandEglWindow from libqt-plugin-wayland-egl.so); the plugin's symbol must be one of QtWaylandClient's."""
         d = Dl()
-        return bool(addr) and bool(libc.dladdr(addr, ctypes.byref(d))) and d.fname is not None and b"libQt6WaylandClient" in d.fname
+        if not addr or not libc.dladdr(addr, ctypes.byref(d)) or d.fname is None:
+            return False
+        if b"libQt6WaylandClient" in d.fname:
+            return True
+        return b"libqt-plugin-wayland" in d.fname and (d.sname or b"").startswith(b"_ZTVN15QtWaylandClient")
 
     handle = gui._ZNK7QWindow6handleEv
     handle.restype, handle.argtypes = c_void_p, [c_void_p]
