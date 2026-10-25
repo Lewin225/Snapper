@@ -44,18 +44,20 @@ Snapper can either be ran on it's own, or used to open a video file. which will 
 6. If you have selected a clip already, you can deselect it with escape, or by clicking "Deselect Clip in the Playback panel"
 
 7. The waveform should be visible in the clip editor by now
+   <img width="1048" height="177" alt="40" src="https://github.com/user-attachments/assets/57524052-971a-498e-bc8d-31dd33014111" />
+
 	* With no clip selected - drag the wave left and right to scrub it
 	* Click anywhere on the wave to seek to that point
 	* Scroll on the waveform to change the zoom level
 	* If you used the whisper subtitles, you can see the individual words up above the wave
 	
-8. Make a clip
+9. Make a clip
 	* Hold right click on the wave until your cursor changes to a cross
 	* Drag right till you've got the selection you want
 	* If you've got whisper subs, you can click a line in the transcript, or a word in the waveform
 	* Any method of clip selection will focus it in the wave viewer
 	
-9. Adjust your clip
+10. Adjust your clip
 	* Drag the green handle to move the start point
 	* Drag the red handle to adjust the out point
 	* You can also drag the in, out and length value fields below left and right if you prefer
@@ -63,7 +65,7 @@ Snapper can either be ran on it's own, or used to open a video file. which will 
 	* Whisper users - You can check "Snap to words" to make the in and out positions do that thing that the checkbox says when dragged
 	* You'll notice the waveform automatically scales to fit the full height of the window, this doesn't change the export or playback volume, it's just a visual aid
 
-10. Tag your clip
+11. Tag your clip
 	* Tags are a per project setting
 	* Tags are exported in the audio metadata for each clip
 	* The default tag is character (string)
