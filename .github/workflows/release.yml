@@ -1,0 +1,88 @@
+# Builds the pip wheel and the Flatpak bundle. Pushing a tag such as v1.0.0 builds both and puts them on a DRAFT release
+# (look it over, then publish it). "Run workflow" on the Actions page builds both without a release, to try the build.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  wheel:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-python@v5.6.0
+        with:
+          python-version: "3.12"
+      - name: The tag matches the version in pyproject.toml and the Flatpak's metainfo
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version=$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME, but pyproject.toml says $version"; exit 1; }
+          grep -q "<release version=\"$version\"" flatpak/io.github.Lewin225.Snapper.metainfo.xml \
+            || { echo "the metainfo has no release $version"; exit 1; }
+      - run: python -m pip install build
+      - run: python -m build --wheel
+      - name: The wheel carries the app, its icon and both backends
+        run: |
+          unzip -l dist/*.whl > contents.txt
+          for f in snapper/__main__.py snapper/snapper.svg speech_backend/transcribe_worker.py isolation_backend/isolate_worker.py; do
+            grep -q "$f" contents.txt || { echo "missing from the wheel: $f"; exit 1; }
+          done
+      - uses: actions/upload-artifact@v4.6.2
+        with:
+          name: wheel
+          path: dist/*.whl
+          if-no-files-found: error
+
+  flatpak:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150      # ffmpeg, libplacebo and mpv are built from source
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - name: Install flatpak and flatpak-builder
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+          # Ubuntu 24.04 blocks the user namespaces the build sandbox (bubblewrap) needs
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+      - name: Build cache
+        uses: actions/cache@v4.2.3
+        with:
+          path: flatpak/.flatpak-builder
+          key: flatpak-${{ hashFiles('flatpak/io.github.Lewin225.Snapper.yml') }}-${{ github.sha }}
+          restore-keys: flatpak-${{ hashFiles('flatpak/io.github.Lewin225.Snapper.yml') }}-
+      - name: Build
+        working-directory: flatpak
+        run: flatpak-builder --user --force-clean --ccache --install-deps-from=flathub --repo=repo build-dir io.github.Lewin225.Snapper.yml
+      - name: Make the bundle (it fetches the KDE runtime from Flathub when installed)
+        run: flatpak build-bundle --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo flatpak/repo Snapper.flatpak io.github.Lewin225.Snapper
+      - uses: actions/upload-artifact@v4.6.2
+        with:
+          name: flatpak
+          path: Snapper.flatpak
+          if-no-files-found: error
+          compression-level: 0     # already compressed
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [wheel, flatpak]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4.3.0
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -l assets
+          gh release create "$GITHUB_REF_NAME" assets/* --repo "$GITHUB_REPOSITORY" --draft --generate-notes --title "Snapper ${GITHUB_REF_NAME#v}"
