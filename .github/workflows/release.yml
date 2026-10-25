@@ -15,7 +15,7 @@ jobs:
   wheel:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4.2.2
+      - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v5.6.0
         with:
           python-version: "3.12"
@@ -44,7 +44,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 150      # ffmpeg, libplacebo and mpv are built from source, so it takes a while
     steps:
-      - uses: actions/checkout@v4.2.2
+      - uses: actions/checkout@v7.0.1
       - name: Install flatpak and flatpak-builder
         run: |
           sudo apt-get update
