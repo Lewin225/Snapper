@@ -1,5 +1,7 @@
 # Snapper
 Snapper is a tool for quickly cutting hundreds of audio clips from a video it was part of another project, but it's so useful on it's own I split it off
+<img width="1630" height="1111" alt="Snapper — Ed, Edd n Eddy (1999) - S03E01 - Wish You Were Ed (1080p AI4K x265 ImE) mkv1" src="https://github.com/user-attachments/assets/22e6e745-a271-410c-82a4-6e14619dca32" />
+
 
 - Wide format support via mpv
 - Rapid seeking with optional proxy generation Seek and select by
@@ -73,6 +75,9 @@ Snapper can either be ran on it's own, or used to open a video file. which will 
 		* For text, If you've typed it before, it will appear in the dropdown
 		* The first 9 character names entered are added as keyboard shortcuts (1-9)
 	* For booleans just check the box
+
+<img width="392" height="260" alt="Add tag type1" src="https://github.com/user-attachments/assets/e3cf67c2-334c-4ac9-8178-a4deef6e5eec" />
+
 	
 11. Add your text
 	* Snapper makes a best guess on what text is in your clip, and is accurate on whisper transcriptions, but you can revise the text in the "Text" box
@@ -89,6 +94,8 @@ Snapper can either be ran on it's own, or used to open a video file. which will 
 	* Clicking done just takes you back to whatever new clip you were editing
 	* You can filter your clips from the top of the library view
 	* Right click a clip to duplicate or delete it
+<img width="774" height="937" alt="2000" src="https://github.com/user-attachments/assets/efa6a051-7440-4491-a57c-f6523115cfc7" />
+
 	
 14. Exporting your clips
 	* The export menu will be disabled on a new project, first you'll have to set up the export
@@ -106,6 +113,8 @@ Snapper can either be ran on it's own, or used to open a video file. which will 
 	* Folders, Check each tag to make it a folder in your export, this let's you organise the output based on the tags. eg by character, speaking volume, emotion etc...
 	* Folders - Select a tag then click move up / move down to change it's position in the folder structure, the highest one is the parent, each one down is a child
 	* Click "Okay" to confirm the export settings
+<img width="690" height="945" alt="Export settings1" src="https://github.com/user-attachments/assets/35cfd5f5-5c8c-4fa5-9ca4-444a7ae6ed68" />
+
 	
 15. Running the export
 	* Click "Export" in the Library (Bottom Right) to manually export your clips
