@@ -1,5 +1,7 @@
 # Snapper
 Snapper is a tool for quickly cutting hundreds of audio clips from a video. It was part of another project, but it's so useful on it's own I split it off
+
+*Qt6 App - x86_64 - Linux Only - Wayland or X (Would probably run on win/mac with tweaks)*
 <img width="1630" height="1111" alt="Snapper — Ed, Edd n Eddy (1999) - S03E01 - Wish You Were Ed (1080p AI4K x265 ImE) mkv1" src="https://github.com/user-attachments/assets/22e6e745-a271-410c-82a4-6e14619dca32" />
 
 
@@ -26,24 +28,25 @@ Snapper can either be ran on it's own, or used to open a video file. which will 
 
 
 # Typical workflow / Tutorial
-1. Open a video, or start a new snapper project and select one
+1. **Open a video** (or start a new snapper project and select one)
 
-2. Snapper will start generating a proxy video for faster scrubbing, if you have fast storage, you can turn it off in View->Use Scrub Proxy
+2. **Snapper will start generating a proxy video for faster scrubbing**, if you have fast storage, you can turn it off in View->Use Scrub Proxy
 
-3. Open a transcript, using either
+3. **Open a transcript, using either**
 	* "Generate using WhisperX" ([more information](#optional-tools-whisperx-and-audio-separator)) - 99% of the time this is the best option, generates solid, accurate transcription with word level timings giving you great select to clip behaviour. will also populate the wave view with overhead words and allow selection snapping
 	
 	* "Load from video" - Load the transcript from the video subtitles, usually not accurate enough for clipping work, but you can still navigate with it - will present a list of subtitles if there's more than one.
 	
 	* "Import srt file" - same as embedded but you can use your own file, ymmv
 
-4. Play the video using the Play and Stop buttons under the video in the Playback panel, Pause replaces Play as needed
+4. **Play the video** using the Play and Stop buttons under the video in the Playback panel, Pause replaces Play as needed
 
-5. Try clicking on the transcript to navigate the video, clicking an entry will advance the video to it's start and select the clip in the editor based on the start and end of the line. If the video was playing, it'll continue playing
+5. **Try clicking on the transcript to navigate the video**, clicking an entry will advance the video to it's start and select the clip in the editor based on the start and end of the line. If the video was playing, it'll continue playing
 
-6. If you have selected a clip already, you can deselect it with escape, or by clicking "Deselect Clip in the Playback panel"
+6. **If you have selected a clip already, you can deselect it with escape**, or by clicking "Deselect Clip in the Playback panel"
 
-7. The waveform should be visible in the clip editor by now
+7. **The waveform should be visible in the clip editor by now**
+
    <img width="1048" height="177" alt="40" src="https://github.com/user-attachments/assets/57524052-971a-498e-bc8d-31dd33014111" />
 
 	* With no clip selected - drag the wave left and right to scrub it
@@ -51,13 +54,13 @@ Snapper can either be ran on it's own, or used to open a video file. which will 
 	* Scroll on the waveform to change the zoom level
 	* If you used the whisper subtitles, you can see the individual words up above the wave
 	
-9. Make a clip
+9. **Make a clip**
 	* Hold right click on the wave until your cursor changes to a cross
 	* Drag right till you've got the selection you want
 	* If you've got whisper subs, you can click a line in the transcript, or a word in the waveform
 	* Any method of clip selection will focus it in the wave viewer
 	
-10. Adjust your clip
+10. **Adjust your clip**
 	* Drag the green handle to move the start point
 	* Drag the red handle to adjust the out point
 	* You can also drag the in, out and length value fields below left and right if you prefer
@@ -65,7 +68,7 @@ Snapper can either be ran on it's own, or used to open a video file. which will 
 	* Whisper users - You can check "Snap to words" to make the in and out positions do that thing that the checkbox says when dragged
 	* You'll notice the waveform automatically scales to fit the full height of the window, this doesn't change the export or playback volume, it's just a visual aid
 
-11. Tag your clip
+11. **Tag your clip**
 	* Tags are a per project setting
 	* Tags are exported in the audio metadata for each clip
 	* The default tag is character (string)
@@ -80,13 +83,13 @@ Snapper can either be ran on it's own, or used to open a video file. which will 
  	
 
 	
-11. Add your text
+12. **Add your text**
 	* Snapper makes a best guess on what text is in your clip, and is accurate on whisper transcriptions, but you can revise the text in the "Text" box
 	
-12. Save your clip
+13. **Save your clip**
 	* Click "Save to library" or press enter 
 	
-13. Managing your clips
+14. **Managing your clips**
 	* Your clip will now appear in the library in the right pane
 	* Click a clip to reopen it
 	* Click the clip again to play it
@@ -98,7 +101,7 @@ Snapper can either be ran on it's own, or used to open a video file. which will 
  	* <img width="774" height="937" alt="2000" src="https://github.com/user-attachments/assets/efa6a051-7440-4491-a57c-f6523115cfc7" />
 
 	
-14. Exporting your clips
+15. **Exporting your clips**
 	* The export menu will be disabled on a new project, first you'll have to set up the export
 	* Click the "Export Settings" button at the bottom of the library
 	(Image of export folder to go here)
@@ -117,15 +120,15 @@ Snapper can either be ran on it's own, or used to open a video file. which will 
 	 * <img width="690" height="945" alt="Export settings1" src="https://github.com/user-attachments/assets/35cfd5f5-5c8c-4fa5-9ca4-444a7ae6ed68" />
 
 	
-15. Running the export
+16. **Running the export**
 	* Click "Export" in the Library (Bottom Right) to manually export your clips
-	* Tick "Auto Export" - your clips will be exported as soon as you create or modify them, including moving them around as you retag - You can continue to work and create new clips with this on
+	* **Tick "Auto Export" - your clips will be exported as soon as you create or modify them**, including moving them around as you retag - You can continue to work and create new clips with this on
 
-16. Where my clips at?
+17. **Where my clips at?**
 	* Right click any clip (after export has run) in the Library and select "Open containing folder" to find it
 	* Same, but click "Open in system app" to play it in whatever your default app is
 	
-17. Background noise removal (For Clipping + Exports)
+18. **Background noise removal (For Clipping + Exports)**
 	* Snapper can remove background noise from your source audio and will give very clean results for most tv shows, with heavy musical sequences as the exception
 	* You'll want about 12 GB free. The GPU install is about 5 GB, the CPU one about 1 GB, and the first run downloads the audio model (about 0.7 GB)
 	* If your pc is up to the task - click "Audio" on the top menu bar
@@ -147,7 +150,7 @@ Snapper can either be ran on it's own, or used to open a video file. which will 
 	* Background audio will remain visible on the wave, but faded out
 	* Exports use whichever audio the clip is set to. Click "Processed" on a clip to cut it from the clean audio, clips left on "Original" export the original.
 
-18. Custom Noise removal
+19. **Custom Noise removal**
     - You can process the audio on your own then bring it in using the "Load custom processed audio" option
     - This replaces any existing processed audio, and vice vera if you use the auto generator
 
@@ -155,7 +158,7 @@ Snapper can either be ran on it's own, or used to open a video file. which will 
 
 # Extras
 
-Scrub sound
+**Scrub sound**
 - Dragging the wave with no clip selected plays the audio under the cursor, like scrubbing a tape. 
 - Pick how it sounds in Audio -> "Scrub sound"
   - Tape - the audio under the cursor at the speed you drag, pitch follows the speed. This is the default
@@ -163,18 +166,19 @@ Scrub sound
   - Playback - short pieces of the video's audio through the player, it's the lightest but isn't very fun
   - Muted - no sound while scrubbing
 - It follows the volume slider and mute, if it's too loud or quiet check those first
+- ***Tape and granular scrub sounds need PulseAudio or PipeWire's pulse layer***
 
 
 ## Running it
 
-Flatpak (from a release bundle):
+**Flatpak** (from a release bundle):
 
     flatpak install --user Snapper.flatpak
     flatpak run io.github.Lewin225.Snapper
 Then click the entry in the app launcher, or right click a video and open with snapper
 
 ---
-Without Flatpak, with pip or pipx (Linux; other platforms are not tested). Snapper uses your system's **libmpv** and **ffmpeg** (with the `libx264` and `libmp3lame` encoders, for the scrub proxy and MP3 export; stock Fedora ffmpeg may lack them, install ffmpeg from [RPM Fusion](https://rpmfusion.org)). Install those first, for example:
+**Without Flatpak**, with pip or pipx (Linux; other platforms are not tested). Snapper uses your system's **libmpv** and **ffmpeg** (with the `libx264` and `libmp3lame` encoders, for the scrub proxy and MP3 export; stock Fedora ffmpeg may lack them, install ffmpeg from [RPM Fusion](https://rpmfusion.org)). Install those first, for example:
 
     sudo dnf install mpv-libs ffmpeg        # Fedora        (Debian/Ubuntu: sudo apt install libmpv2 ffmpeg)
     pipx install https://github.com/Lewin225/Snapper/releases/download/v1.0.0/snapper-1.0.0-py3-none-any.whl
@@ -225,3 +229,4 @@ Third-party software it uses or ships:
 The Flatpak manifest in `flatpak/` lists the exact source of everything it builds. The speech models WhisperX downloads have their own licences.
 
 Test video: *Tears of Steel* © Blender Foundation | mango.blender.org, CC BY 3.0 (downloaded when you run the tests, not bundled).
+
