@@ -1,0 +1,58 @@
+# Looks up the exact package versions Snapper depends on in OSV (the open vulnerability database behind the PyPI advisories and
+# GitHub's alerts): the app's own dependencies, and the packages the optional engines (WhisperX, audio-separator) install for users,
+# read from app/snapper/engine.py. Runs every Monday, when those files change, and on request.
+# A vulnerable version fails the run. After looking at an advisory, accept it in .github/osv-ignore.txt (the id and the reason).
+# Not covered: the C libraries the Flatpak builds from source (ffmpeg, mpv, libplacebo, x264, LAME, libass).
+name: Dependency audit
+
+on:
+  schedule:
+    - cron: "17 5 * * 1"
+  push:
+    branches: [main]
+    paths:
+      - pyproject.toml
+      - app/requirements.txt
+      - app/snapper/engine.py
+      - .github/scripts/**
+      - .github/osv-ignore.txt
+      - .github/workflows/security.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  app:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-python@v5.6.0
+        with:
+          python-version: "3.13"      # what the Flatpak runs
+      - name: Work out the versions pip would install
+        run: |
+          pip install --dry-run --ignore-installed --quiet --report report.json --only-binary=:all: -r app/requirements.txt
+      - name: Check them
+        run: python .github/scripts/osv_check.py report.json
+
+  engines:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [whisperx, separator]
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-python@v5.6.0
+        with:
+          python-version: "3.13"
+      - name: List what Snapper installs for the engine
+        run: python .github/scripts/engine_requirements.py engines
+      - name: Work out the versions pip would install
+        # PyTorch's CPU index keeps the CUDA libraries out of the way; the versions of the packages are the same
+        run: |
+          pip install --dry-run --ignore-installed --quiet --report report.json --only-binary=:all: \
+            --extra-index-url https://download.pytorch.org/whl/cpu -r engines/${{ matrix.engine }}.txt
+      - name: Check them
+        run: python .github/scripts/osv_check.py report.json engines/${{ matrix.engine }}-nodeps.txt

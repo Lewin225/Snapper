@@ -1,0 +1,15 @@
+# Weekly pull requests for newer versions of what the project builds on. (Security alerts are a separate setting of the repository.)
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: pip
+    directory: /app            # requirements.txt
+    schedule:
+      interval: weekly
+  - package-ecosystem: pip
+    directory: /               # pyproject.toml
+    schedule:
+      interval: weekly

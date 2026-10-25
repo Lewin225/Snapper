@@ -51,6 +51,12 @@ Releases are built on GitHub: `.github/workflows/release.yml` builds the wheel a
 draft release (the tag must equal `version` in `pyproject.toml`, and the metainfo needs a `<release>` for it). "Run workflow" on the Actions
 page builds both without a release. The workflow has not run yet; the first run may need adjusting (runner disk space, bubblewrap permissions).
 
+Dependencies are audited by `.github/workflows/security.yml` (weekly, and when `pyproject.toml`, `app/requirements.txt` or `engine.py` change): it
+resolves the exact versions of the app's dependencies and of what each engine installs (read from `engine.py` by
+`.github/scripts/engine_requirements.py`), and `osv_check.py` looks them up in OSV. A vulnerable version fails the run; accept an advisory
+after reading it by adding its id and the reason to `.github/osv-ignore.txt`. The C libraries the Flatpak builds from source are not covered.
+Dependabot (`.github/dependabot.yml`) opens weekly pull requests for newer versions.
+
 If a build is interrupted, a stale `rofiles-fuse` mount can make the next one fail ("Transport endpoint is not connected"): unmount it
 (`fusermount3 -uz`) and remove `.flatpak-builder/rofiles`. Do not match processes with `pkill -f` from a shell command that contains the
 same text; it kills its own shell.
