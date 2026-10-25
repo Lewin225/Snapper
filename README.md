@@ -1,54 +1,32 @@
-Snapper is a tool for quickly cutting hundreds of audio clips from a video
+# Snapper
+Snapper is a tool for quickly cutting hundreds of audio clips from a video it was part of another project, but it's so useful on it's own I split it off
 
-It was part of my game tooling, but it's so useful on it's own I split it off
-
-* Wide format support via mpv
-* Rapid seeking with optional proxy generation
-* Seek and select by transcript, either from your video, or an external srt file
-* Optional automatic transcription generation via WhisperX <- very good ([more information](#optional-tools-whisperx-and-audio-separator))
-* Optional automatic background removal for vocals via audio-separator ([more information](#optional-tools-whisperx-and-audio-separator))
-* GPU Accelerated where available
-* Custom project level tagging setup
-* Custom tags can be exported into audio files
-* Custom tags can drive export into separate folder
-* Automatic realtime export as you work
-* Automatic re-export of clips on path or structure change
-* Optional tape scrubbing mode with free or pitch corrected audio
-* Auto saved projects that resume to where you left off
+- Wide format support via mpv
+- Rapid seeking with optional proxy generation Seek and select by
+   transcript, either from your video, or an external srt file 
+- Built in models ([more information](#optional-tools-whisperx-and-audio-separator))
+   - Optional automatic transcription generation via WhisperX <- very good  
+   - Optional automatic background removal for vocals via audio-separator 
+- GPU Accelerated where available 
+- Custom project level tagging setup 
+- Custom tags can be exported into audio files 
+- Custom tags can drive export into separate folder 
+- Automatic realtime export as you work, re-export of clips on path or structure change 
+- Optional tape scrubbing mode with free or pitch corrected audio 
+- Auto saved projects that resume to where you left off
 
 To run snapper, you can download the provided flatpak. or download the source and use run.sh, or compile the flatpak yourself. or some fourth option. it's all yours baby ([more information](#running-it))
 
 * If using run.sh - it will warn you if your system is missing required components and tell you how to install them (it doesn't install anything itself)
 * If using the flatpak, the required components are bundled
 
-Snapper has no hard hardware requirements, but you'll want to let it use your gpu for model based transcription and noise removal or you'll be waiting a million years
-
 Snapper can either be ran on it's own, or used to open a video file. which will start a new project for that video if one doesn't already exist
 
 
-Setting up WhisperX (first time only)
-WhisperX is what writes the transcripts. It isn't bundled, it's a few GB of Python packages, so Snapper installs it for you the first time you ask for one
-1. Open a video, then click Transcript -> Generate using WhisperX -> From original audio
-2. If WhisperX isn't found you'll get the setup window, pick a runtime
-	* GPU (NVIDIA CUDA) - about 5 GB download, fast
-	* CPU only - about 1 GB download, many times slower. Fine to try it out, painful for a whole episode
-3. Click "Install separately, just for Snapper"
-	* It goes in its own private Python environment in Snapper's data folder, your system Python isn't touched
-	* There's a progress bar with the download rate and time left, the big packages take a while
-	* You need about 12 GB free
-4. When it finishes the transcript starts straight away. The first one also downloads the speech model (about 3 GB), after that it's already there
-5. Other options if you'd rather not
-	* "Install into my system Python" - goes into ~/.local only, it will ask first if your distro blocks pip installs
-	* "Use my own installation..." - point it at a Python that already has whisperx, torch and torchaudio. Snapper installs whisperx 3.8.6 with torch and torchaudio 2.8.0 if you want to match it
-	* If you're using the flatpak it can only use an installation it can reach, so your own one needs to be in a folder the flatpak has access to
-6. Installed environments live in Snapper's data folder, File -> Open the folder of installed environments takes you there. WhisperX and audio-separator each get their own, they aren't shared
-	* If the install fails, copy the last few lines of the error into an issue on GitHub
+# Typical workflow / Tutorial
+1. Open a video, or start a new snapper project and select one
 
-
-Typical workflow looks like this
-1.Open a video, or start a new snapper project and select one
-
-2.Snapper will start generating a proxy video for faster scrubbing, if you have fast storage, you can turn it off in View->Use Scrub Proxy
+2. Snapper will start generating a proxy video for faster scrubbing, if you have fast storage, you can turn it off in View->Use Scrub Proxy
 
 3. Open a transcript, using either
 	* "Generate using WhisperX" ([more information](#optional-tools-whisperx-and-audio-separator)) - 99% of the time this is the best option, generates solid, accurate transcription with word level timings giving you great select to clip behaviour. will also populate the wave view with overhead words and allow selection snapping
@@ -91,13 +69,13 @@ Typical workflow looks like this
 			* Enter a tag name
 			* Choose the type - String, Boolean (Yes/No) or Integer (Number)
 			
-	* If it's text or number, type the text and press enter to confirm
+	* If it's a text or number tag, type the text and press enter to confirm
 		* For text, If you've typed it before, it will appear in the dropdown
 		* The first 9 character names entered are added as keyboard shortcuts (1-9)
 	* For booleans just check the box
 	
 11. Add your text
-	* Snapper makes a best guess on what text is in your clip, and is accurate on whisper transcriptions, but you can revise the text here
+	* Snapper makes a best guess on what text is in your clip, and is accurate on whisper transcriptions, but you can revise the text in the "Text" box
 	
 12. Save your clip
 	* Click "Save to library" or press enter 
@@ -119,9 +97,9 @@ Typical workflow looks like this
 	* For the Export folder - click browser and select an EMPTY folder
 		* It's not required to be empty, but when auto export is enabled snapper will delete, rename and move files in realtime within this folder to match the export options you choose
 		* If you pick a full one and it deletes something that's on you
-		* Using the flatpak version this may show as /run/user/1000/doc/(random), after selection, it will go where you selected regardless
+		* Using the flatpak version this may show as /run/user/1000/doc/(random), after selection, but it will export where you selected regardless
 	* Enter a file name, without the file extension - Make sure to add a placeholder or they'll all be the same name and won't write. the default file name will work for most projects
-	* Clip text in the file name will be "close enough" - some characters aren't allowed in filenames, check your os documentation for this
+	* Clip text in file names will be "close enough" - some characters aren't allowed in filenames, check your os documentation for this
 	* Choose your file format, Channels, Sample Rate, Bit Depth. The defaults will work for most
 	* "Clip Text Goes In" - Choose where in the file the full clip text will be placed, each file type has slightly different tag fields to choose from
 	* "Add the clip's tags to the file" - Inserts all your tag data into one of the tag fields, on mp3 this is a custom field called snpr containing json
@@ -159,18 +137,22 @@ Typical workflow looks like this
 	* Background audio will remain visible on the wave, but faded out
 	* Exports use whichever audio the clip is set to. Click "Processed" on a clip to cut it from the clean audio, clips left on "Original" export the original.
 
+18. Custom Noise removal
+    - You can process the audio on your own then bring it in using the "Load custom processed audio" option
+    - This replaces any existing processed audio, and vice vera if you use the auto generator
 
-Extras
+
+
+# Extras
 
 Scrub sound
-	* Dragging the wave with no clip selected plays the audio under the cursor, like scrubbing a tape. Faster drag = faster, higher sound, drag backwards and it plays backwards, hold still and it goes quiet
-	* It uses the processed audio if the clip is set to it and it exists, otherwise the original
-	* Pick how it sounds in Audio -> "Scrub sound"
-		* Tape - the audio under the cursor at the speed you drag, pitch follows the speed. This is the default
-		* Granular - same idea but the pitch stays put, so it sounds more like a stuttering voice than a tape, ytp style
-		* Playback - short pieces of the video's audio through the player, it's the lightest but isn't very fun
-		* Muted - no sound while scrubbing
-	* It follows the volume slider and mute, if it's too loud or quiet check those first
+- Dragging the wave with no clip selected plays the audio under the cursor, like scrubbing a tape. 
+- Pick how it sounds in Audio -> "Scrub sound"
+  - Tape - the audio under the cursor at the speed you drag, pitch follows the speed. This is the default
+  - Granular - same idea but the pitch stays put, ytp style
+  - Playback - short pieces of the video's audio through the player, it's the lightest but isn't very fun
+  - Muted - no sound while scrubbing
+- It follows the volume slider and mute, if it's too loud or quiet check those first
 
 
 ## Running it
@@ -179,18 +161,16 @@ Flatpak (from a release bundle):
 
     flatpak install --user Snapper.flatpak
     flatpak run io.github.Lewin225.Snapper
+Then click the entry in the app launcher, or right click a video and open with snapper
 
-Without Flatpak, with pip or pipx (Linux; other platforms are not tested). Snapper uses your system's **libmpv** and **ffmpeg**
-(with the `libx264` and `libmp3lame` encoders, for the scrub proxy and MP3 export; stock Fedora ffmpeg lacks them, install
-ffmpeg from [RPM Fusion](https://rpmfusion.org)). Install those first, for example:
+---
+Without Flatpak, with pip or pipx (Linux; other platforms are not tested). Snapper uses your system's **libmpv** and **ffmpeg** (with the `libx264` and `libmp3lame` encoders, for the scrub proxy and MP3 export; stock Fedora ffmpeg may lack them, install ffmpeg from [RPM Fusion](https://rpmfusion.org)). Install those first, for example:
 
     sudo dnf install mpv-libs ffmpeg        # Fedora        (Debian/Ubuntu: sudo apt install libmpv2 ffmpeg)
     pipx install https://github.com/Lewin225/Snapper/releases/download/v1.0.0/snapper-1.0.0-py3-none-any.whl
     snapper [video-or-project]
 
-If libmpv or ffmpeg is missing, Snapper says so at start and shows the command for your distribution. A missing encoder is
-reported only when you use the feature that needs it (the scrub proxy falls back to the original video; MP3 export asks you to
-pick WAV or fix ffmpeg).
+If libmpv or ffmpeg is missing, Snapper says so at start and shows the command for your distribution. A missing encoder is reported only when you use the feature that needs it (the scrub proxy falls back to the original video; MP3 export asks you to pick WAV or fix ffmpeg).
 
 From a checkout:
 
@@ -201,19 +181,14 @@ With no argument Snapper shows a start screen with your recent projects. Opening
 project, if one exists; opening a project file opens it.
 
 ### Optional tools: WhisperX and audio-separator
-Transcribing and vocal isolation use big Python packages (PyTorch and friends), so they are not part of Snapper. The first
-time you use *Generate using WhisperX* (Transcript menu) or *Generate processed audio using audio-separator* (Audio menu), Snapper checks
-what is missing and offers to install it for a **GPU or a CPU**: *just for Snapper* (a private environment in the app's data
-folder), into your *system Python*, or you can point it at an installation you already have. A GPU is strongly recommended
-(about 5 GB download); everything else works without either tool. Loading subtitles from the video or an `.srt` file needs
-nothing extra.
+Transcribing and vocal isolation use big Python packages (PyTorch and friends), so they are not part of Snapper. The first time you use *Generate using WhisperX* (Transcript menu) or *Generate processed audio using audio-separator* (Audio menu), Snapper checks what is missing and offers to install it for a **GPU or a CPU**: *just for Snapper* (a private environment in the app's data folder), into your *system Python*, or you can point it at an installation you already have. A GPU is strongly recommended (about 5 GB download). Everything else works without either tool. Loading subtitles from the video or an `.srt` file needs nothing extra.
 
-**Processed audio:** *Audio → Generate processed audio using audio-separator* removes the music and effects, leaving the
-dialogue. It runs in the background and can be used as soon as the first part is done (playback returns to the original beyond
-the finished part). The processed audio sits beside the original: pick *Original* or *Processed* per clip in the clip editor
-(or press `V`); the waveform, what you hear and what gets exported all follow that choice. *Audio → Import custom processed
-audio…* lets you use an audio file made with another model or tool instead (it is placed at the start of the episode and
-padded or cut to its length). *Transcript → Generate using WhisperX → From processed audio* often hears the words better.
+**Processed audio:** *Audio → Generate processed audio using audio-separator* removes the music and effects, leaving the dialogue. 
+It runs in the background and can be used as soon as the first part is done (playback returns to the original beyond the finished part). 
+The processed audio sits beside the original: pick *Original* or *Processed* per clip in the clip editor (or press `V`); the waveform, what you hear and what gets exported all follow that choice. 
+
+*Audio → Import custom processed audio…* lets you use an audio file made with another model or tool instead (it is placed at the start of the episode and padded or cut to its length). 
+*Transcript → Generate using WhisperX → From processed audio* often hears the words better.
 
 ## Tests
 
@@ -237,7 +212,6 @@ Third-party software it uses or ships:
 | numpy | BSD-3-Clause |
 | WhisperX, PyTorch, torchaudio, faster-whisper, CTranslate2, transformers | BSD / MIT / Apache-2.0 (installed separately, not bundled) |
 
-The Flatpak manifest in `flatpak/` lists the exact source of everything it builds. The speech models WhisperX downloads
-have their own licences.
+The Flatpak manifest in `flatpak/` lists the exact source of everything it builds. The speech models WhisperX downloads have their own licences.
 
-Test video: *Tears of Steel* © Blender Foundation | mango.blender.org, CC BY 3.0 (downloaded when you run the tests, never bundled).
+Test video: *Tears of Steel* © Blender Foundation | mango.blender.org, CC BY 3.0 (downloaded when you run the tests, not bundled).
