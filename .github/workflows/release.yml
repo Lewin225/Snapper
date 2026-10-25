@@ -1,5 +1,6 @@
-# Builds the pip wheel and the Flatpak bundle. Pushing a tag such as v1.0.0 builds both and puts them on a DRAFT release
-# (look it over, then publish it). "Run workflow" on the Actions page builds both without a release, to try the build.
+# Builds the pip wheel and the Flatpak bundle.
+#  - Push a tag such as v1.0.0: both are built and put on a DRAFT release (look it over, then publish it).
+#  - Actions page, "Run workflow": both are built and kept as run artifacts, with no release, to try the build.
 name: Release
 
 on:
