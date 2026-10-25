@@ -34,7 +34,7 @@ jobs:
           for f in snapper/__main__.py snapper/snapper.svg speech_backend/transcribe_worker.py isolation_backend/isolate_worker.py; do
             grep -q "$f" contents.txt || { echo "missing from the wheel: $f"; exit 1; }
           done
-      - uses: actions/upload-artifact@v4.6.2
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: wheel
           path: dist/*.whl
@@ -63,7 +63,7 @@ jobs:
         run: flatpak-builder --user --force-clean --ccache --install-deps-from=flathub --repo=repo build-dir io.github.Lewin225.Snapper.yml
       - name: Make the bundle (it fetches the KDE runtime from Flathub when installed)
         run: flatpak build-bundle --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo flatpak/repo Snapper.flatpak io.github.Lewin225.Snapper
-      - uses: actions/upload-artifact@v4.6.2
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: flatpak
           path: Snapper.flatpak
