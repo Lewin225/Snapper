@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4.2.2
-      - uses: actions/setup-python@v5.6.0
+      - uses: actions/setup-python@v7.1.0
         with:
           python-version: "3.13"      # what the Flatpak runs
       - name: Work out the versions pip would install
@@ -44,7 +44,7 @@ jobs:
         engine: [whisperx, separator]
     steps:
       - uses: actions/checkout@v4.2.2
-      - uses: actions/setup-python@v5.6.0
+      - uses: actions/setup-python@v7.1.0
         with:
           python-version: "3.13"
       - name: List what Snapper installs for the engine
