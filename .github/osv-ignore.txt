@@ -1,1 +1,24 @@
 # Advisories that have been looked at and accepted: the id, then why. One per line; ids listed here are not reported.
+
+# torch 2.8.0: WhisperX 3.8.6 (the latest) requires torch~=2.8.0, so nothing newer can be installed. Wait for a WhisperX release.
+GHSA-qfhq-4f3w-5fph torch 2.8.0, pinned by WhisperX; the fixes are in torch 2.9.1 and later
+GHSA-rrmf-rvhw-rf47 torch 2.8.0, pinned by WhisperX; the fixes are in torch 2.9.1 and later
+GHSA-vgrw-7cvw-pwgx torch 2.8.0, pinned by WhisperX; the fixes are in torch 2.9.1 and later
+PYSEC-2025-203 torch 2.8.0, pinned by WhisperX; the fixes are in torch 2.9.1 and later
+PYSEC-2025-204 torch 2.8.0, pinned by WhisperX; the fixes are in torch 2.9.1 and later
+PYSEC-2025-206 torch 2.8.0, pinned by WhisperX; the fixes are in torch 2.9.1 and later
+PYSEC-2026-139 torch 2.8.0, pinned by WhisperX; the fixes are in torch 2.9.1 and later
+PYSEC-2026-2286 torch 2.8.0, pinned by WhisperX; the fixes are in torch 2.9.1 and later
+
+# transformers 4.57.6: fixed only in 5.x; trying it is tracked in https://github.com/Lewin225/Snapper/issues/9
+GHSA-29pf-2h5f-8g72 transformers 4.57.6, see issue 9
+GHSA-69w3-r845-3855 transformers 4.57.6, see issue 9
+GHSA-fgcw-684q-jj6r transformers 4.57.6, see issue 9
+GHSA-x9r9-c232-4q39 transformers 4.57.6, see issue 9
+GHSA-xrqw-3rrv-vx5w transformers 4.57.6, see issue 9
+PYSEC-2025-217 transformers 4.57.6, see issue 9
+PYSEC-2026-2288 transformers 4.57.6, see issue 9
+PYSEC-2026-2289 transformers 4.57.6, see issue 9
+PYSEC-2026-2290 transformers 4.57.6, see issue 9
+PYSEC-2026-3929 transformers 4.57.6, see issue 9
+PYSEC-2026-4174 transformers 4.57.6, see issue 9
