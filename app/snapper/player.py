@@ -12,6 +12,31 @@ from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
 LOG_ALL = bool(os.environ.get("SNAPPER_MPV_LOG"))  # debugging: print mpv warnings too
 
+_egl = None
+
+
+def _egl_lib():
+    """libEGL, or None where there is none (macOS)."""
+    global _egl
+    if _egl is None:
+        try:
+            _egl = ctypes.CDLL("libEGL.so.1")
+            _egl.eglGetProcAddress.restype = ctypes.c_void_p
+            _egl.eglGetProcAddress.argtypes = [ctypes.c_char_p]
+        except OSError:
+            _egl = False
+    return _egl or None
+
+
+def gl_proc_address(context, name: bytes) -> Optional[int]:
+    """Where the OpenGL function `name` lives, for mpv's renderer. Asked of Qt's own context, which knows which library it is
+    using (GLX, EGL or macOS's); if that gives nothing, of EGL, which is what a Wayland session uses."""
+    addr = context.getProcAddress(name) if context is not None else 0
+    if addr:
+        return int(addr)
+    egl = _egl_lib()
+    return egl.eglGetProcAddress(name) if egl else None
+
 
 class Player(QObject):
     position = Signal(float)
@@ -248,10 +273,7 @@ class VideoWidget(QOpenGLWidget):
         self.frame_ready.connect(self.update)
 
     def initializeGL(self):
-        egl = ctypes.CDLL("libEGL.so.1")
-        egl.eglGetProcAddress.restype = ctypes.c_void_p
-        egl.eglGetProcAddress.argtypes = [ctypes.c_char_p]
-        self._get_proc = mpv.MpvGlGetProcAddressFn(lambda _, name: egl.eglGetProcAddress(name))
+        self._get_proc = mpv.MpvGlGetProcAddressFn(lambda _, name: gl_proc_address(self.context(), name))
         self.ctx = mpv.MpvRenderContext(self.player.mpv, "opengl",
                                         opengl_init_params={"get_proc_address": self._get_proc})
         self.ctx.update_cb = lambda: self.frame_ready.emit()

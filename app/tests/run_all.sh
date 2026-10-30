@@ -13,7 +13,7 @@ export TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 "$(dirname "$0")/fetch_media.sh" || { echo "could not get the test video; stopping" >&2; exit 1; }
 for t in smoke ui_suite progress_test project_test tag_kinds_test theme_test \
-         prune_test launcher_test system_check_test transfer_test drag_lock_test engine_test isolation_test transcript_ui_test id3_test export_test export_ui_test; do
+         prune_test launcher_test system_check_test transfer_test drag_lock_test gl_lookup_test engine_test isolation_test transcript_ui_test id3_test export_test export_ui_test; do
     echo "=== $t"
     if [ "$t" = isolation_test ] && [ ! -x "${SNAPPER_SEP_PYTHON:-$HOME/envs/sep/bin/python}" ]; then
         echo "skipped: no audio-separator environment (SNAPPER_SEP_PYTHON or ~/envs/sep)"; continue

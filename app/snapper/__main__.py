@@ -3,7 +3,7 @@ import os
 import sys
 from pathlib import Path
 
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QIcon, QSurfaceFormat
 from PySide6.QtWidgets import QApplication
 
 from . import system_check
@@ -13,6 +13,11 @@ def main():
     # File dialogs go through the desktop portal (the system's own dialog). Inside a Flatpak sandbox this is the only
     # way to reach files outside the app's own folders; elsewhere it just gives the native look. The user can override.
     os.environ.setdefault("QT_QPA_PLATFORMTHEME", "xdgdesktopportal")
+    if sys.platform == "darwin":   # mpv's renderer needs OpenGL 3.2 or newer; macOS gives Qt the old 2.1 unless a core profile is asked for
+        fmt = QSurfaceFormat()
+        fmt.setVersion(4, 1)
+        fmt.setProfile(QSurfaceFormat.CoreProfile)
+        QSurfaceFormat.setDefaultFormat(fmt)   # before the application exists
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("snapper")
     # On Wayland the window is matched to its launcher entry (name and icon) by this id, which is the Flatpak's app id; where
