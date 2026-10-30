@@ -4,8 +4,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QHBoxLayout, QHeaderView, QLabel, QMenu, QPushButton,
-                               QTableView, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QHBoxLayout, QHeaderView, QLabel, QMenu, QMessageBox,
+                               QPushButton, QTableView, QVBoxLayout, QWidget)
 
 from . import desktop
 from .editor import SAVE_STYLE
@@ -89,6 +89,18 @@ class ClipsPanel(QWidget):
             return
         self.build_context_menu(self._clip(ix)).exec(self.table.viewport().mapToGlobal(pos))
 
+    def _show_in_folder(self, path: Path):
+        """The file manager runs outside the sandbox, so it needs the real path; if the portal can't say what it is, it is
+        given the portal's mount of the folder instead, and the user is told that is not their own folder."""
+        shown = desktop.host_path(path)
+        if shown is None:
+            QMessageBox.warning(self, "Open containing folder",
+                                "The desktop would not say where this folder really is, so the file manager is opening the "
+                                "sandbox's view of it. That is a copy of the folder's contents, not the folder itself; the "
+                                f"exported file is at:\n{path}")
+            shown = desktop.mount_path(path)
+        desktop.show_in_folder(shown)
+
     def build_context_menu(self, clip: Clip) -> QMenu:
         exported = Path(clip.export_path) if clip.export_path else None
         has_file = exported is not None and exported.exists()
@@ -96,7 +108,7 @@ class ClipsPanel(QWidget):
         menu.addAction("Duplicate", lambda: self.clip_duplicate.emit(clip))
         menu.addAction("Delete", lambda: self.clip_delete.emit(clip))
         menu.addSeparator()
-        folder = menu.addAction("Open containing folder", lambda: desktop.show_in_folder(exported))
+        folder = menu.addAction("Open containing folder", lambda: self._show_in_folder(exported))
         app = menu.addAction("Open in system app", lambda: desktop.open_file(exported))
         for a in (folder, app):
             a.setEnabled(has_file)

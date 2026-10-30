@@ -7,17 +7,22 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QMessageBox, QFileDialog, QFormLayout, QGridLayout, QGroupBox, QHBoxLayout,
-                               QLabel, QLineEdit, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout,
-                               QWidget)
+                               QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem, QPushButton, QTableWidget,
+                               QTableWidgetItem, QVBoxLayout, QWidget)
 
-from .export import (DEFAULT_TEMPLATE, FORMATS, SAMPLE_RATES, TOKENS, MP3_QUALITIES, WAV_BIT_DEPTHS, WAV_TEXT_FIELDS, ExportSettings,
+from .export import (DEFAULT_TEMPLATE, FORMATS, SAMPLE_RATES, TOKENS, MP3_QUALITIES, WAV_BIT_DEPTHS, FRAME_CHOICES,
+                     ExportSettings, default_frame, frame_for,
                      output_dir_problem, plan_files, template_problem)
 from . import system_check
 from .model import Project
 
 FORMAT_LABELS = {"wav": "WAV", "mp3": "MP3"}
-TEXT_FIELD_LABELS = {"wav": {"comment": "Comment (ICMT)", "title": "Title (INAM)", "subject": "Subject (ISBJ)"},
-                     "mp3": {"comment": "Comment (COMM)", "title": "Title (TIT2)", "subject": "Subtitle (TIT3)"}}
+FIXED_FIELDS = (("Clip text", "Lyrics (USLT)", "The clip's text is always written as the lyrics, which players show as the text or captions."),
+                ("Synced text", "Synced lyrics (SYLT), not written yet", "The text with the time of each word. It will be written once "
+                 "words can be timed by hand (the chunk editor); until then only the lyrics hold the text."))
+TAGS_TIP = ("Each tag gets the ID3 field chosen in the table below: by default the standard one for a tag called title, artist, album, "
+            "genre, track, date, year, comment or copyright, otherwise a custom field with the tag's name. Yes/No tags are written as "
+            "their two words. All of it is also in one JSON field called 'snpr', with the real values.")
 MP3_LABELS = {"320": "320 kbps", "256": "256 kbps", "192": "192 kbps", "160": "160 kbps", "128": "128 kbps",
               "v0": "Variable, best (V0, about 245 kbps)", "v2": "Variable, high (V2, about 190 kbps)",
               "v4": "Variable, good (V4, about 165 kbps)"}
@@ -105,12 +110,22 @@ class ExportSettingsDialog(QDialog):
         folders.setLayout(fl)
 
         # text and tags
-        self.text_field = QComboBox()
-        self.text_field.addItem("Don't write the text", None)
-        for k in WAV_TEXT_FIELDS:
-            self.text_field.addItem(TEXT_FIELD_LABELS["wav"][k], k)
         self.embed_tags = QCheckBox("Add the clip's tags to the file")
-        self.embed_tags.setToolTip("Written as JSON in a custom 'snpr' chunk of the WAV file.")
+        self.embed_tags.setToolTip(TAGS_TIP)
+        self.text_msg = QLabel()
+        self.text_msg.setWordWrap(True)
+        self.text_msg.setStyleSheet("color: #c0392b;")
+        self.fields = QTableWidget(0, 2)   # what goes where in the file's ID3 tag: two fixed rows, then one per tag
+        self.fields.setHorizontalHeaderLabels(["Clip data", "ID3 field"])
+        self.fields.verticalHeader().hide()
+        self.fields.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.fields.setSelectionMode(QTableWidget.NoSelection)
+        self.fields.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.fields.setMinimumHeight(170)
+        self.field_box = QGroupBox("Where things go in the file")
+        fb = QVBoxLayout(self.field_box)
+        fb.addWidget(self.fields)
+        fb.addWidget(self.text_msg)
 
         form = QFormLayout()
         form.addRow("Export folder", self.folder_row)
@@ -124,7 +139,6 @@ class ExportSettingsDialog(QDialog):
         form.addRow("Sample rate", self.rate)
         form.addRow(self.bits_label, self.bits)
         form.addRow(self.quality_label, self.quality)
-        form.addRow("Clip text goes in", self.text_field)
         form.addRow("", self.embed_tags)
 
         self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -135,12 +149,14 @@ class ExportSettingsDialog(QDialog):
         self.buttons.addButton(reset, QDialogButtonBox.ResetRole)
         lay = QVBoxLayout(self)
         lay.addLayout(form)
+        lay.addWidget(self.field_box)
         lay.addWidget(folders)
         lay.addWidget(self.buttons)
 
         self.template.textChanged.connect(self._refresh)
         self.folder_list.itemChanged.connect(self._refresh)
         self.folder_list.model().rowsMoved.connect(self._refresh)
+        self.embed_tags.toggled.connect(self._refresh)
         self.format.currentIndexChanged.connect(self._format_changed)
         self.format.activated.connect(self._format_picked)
         self._build_placeholders()
@@ -204,10 +220,6 @@ class ExportSettingsDialog(QDialog):
             w.setVisible(fmt == "wav")
         for w in (self.quality, self.quality_label):
             w.setVisible(fmt == "mp3")
-        for i in range(1, self.text_field.count()):   # the same three choices, named for the format's own tags
-            self.text_field.setItemText(i, TEXT_FIELD_LABELS[fmt][self.text_field.itemData(i)])
-        self.embed_tags.setToolTip("Written as JSON in a custom 'snpr' " + (
-            "chunk of the WAV file." if fmt == "wav" else "text frame (TXXX) of the MP3's ID3 tag."))
         self._refresh()   # the example file name shows the format's extension
         missing = fmt == "mp3" and not system_check.has_encoder("libmp3lame")
         self.format.setToolTip(system_check.missing_encoder_text("libmp3lame") if missing else "")
@@ -229,8 +241,8 @@ class ExportSettingsDialog(QDialog):
         self._set(self.rate, s.sample_rate)
         self._set(self.bits, s.bit_depth)
         self._set(self.quality, s.mp3_quality)
-        self._set(self.text_field, s.text_field)
         self.embed_tags.setChecked(s.embed_tags)
+        self._load_fields(s)
         folder_tags = [t for t in s.folder_tags if t in self.project.tag_kinds]
         order = folder_tags + [t for t in self.project.tag_types if t not in folder_tags]
         self.folder_list.blockSignals(True)
@@ -246,6 +258,41 @@ class ExportSettingsDialog(QDialog):
         self._format_changed()
         self._refresh()
 
+    def _load_fields(self, s: ExportSettings):
+        """The two fixed rows (read-only), then each tag with a choice of ID3 field."""
+        self.fields.setRowCount(0)
+        grey = self.palette().color(self.palette().ColorGroup.Disabled, self.palette().ColorRole.Text)
+        for what, where, tip in FIXED_FIELDS:
+            r = self.fields.rowCount()
+            self.fields.insertRow(r)
+            for c, text in enumerate((what, where)):
+                item = QTableWidgetItem(text)
+                item.setFlags(Qt.ItemIsEnabled)
+                item.setForeground(grey)
+                item.setToolTip(tip)
+                self.fields.setItem(r, c, item)
+        for tag in self.project.tag_types:
+            r = self.fields.rowCount()
+            self.fields.insertRow(r)
+            item = QTableWidgetItem(tag)
+            item.setFlags(Qt.ItemIsEnabled)
+            self.fields.setItem(r, 0, item)
+            combo = QComboBox()
+            for fid, label in FRAME_CHOICES.items():
+                combo.addItem(label if fid == "TXXX" else f"{label} ({fid})", fid)
+            self._set(combo, frame_for(s, tag))
+            combo.currentIndexChanged.connect(self._refresh)
+            self.fields.setCellWidget(r, 1, combo)
+
+    def _tag_frames(self) -> dict[str, str]:
+        """The choices that differ from the default for the tag's name."""
+        out = {}
+        for r in range(len(FIXED_FIELDS), self.fields.rowCount()):
+            tag, fid = self.fields.item(r, 0).text(), self.fields.cellWidget(r, 1).currentData()
+            if fid != default_frame(tag):
+                out[tag] = fid
+        return out
+
     def _move(self, d: int):
         r = self.folder_list.currentRow()
         if 0 <= r + d < self.folder_list.count():
@@ -260,7 +307,7 @@ class ExportSettingsDialog(QDialog):
         return ExportSettings(
             output_dir=self.folder.text(), name_template=self.template.text().strip() or DEFAULT_TEMPLATE, format=self.format.currentData(),
             channels=self.channels.currentData(), sample_rate=self.rate.currentData(),
-            bit_depth=self.bits.currentData(), folder_tags=tags, text_field=self.text_field.currentData(),
+            bit_depth=self.bits.currentData(), folder_tags=tags, tag_frames=self._tag_frames(),
             embed_tags=self.embed_tags.isChecked(), mp3_quality=self.quality.currentData())
 
     def _refresh(self, *_):
@@ -268,6 +315,16 @@ class ExportSettingsDialog(QDialog):
         problem = template_problem(self.template.text(), self.project.tag_types)
         self.template_msg.setText(problem or "")
         self.template_msg.setVisible(bool(problem))
+        for r in range(len(FIXED_FIELDS), self.fields.rowCount()):
+            self.fields.cellWidget(r, 1).setEnabled(s.embed_tags)
+        taken, clashes = {}, []   # two tags bound to one field: the first has it, the other is written as a custom field
+        for t in self.project.tag_types:
+            fid = frame_for(s, t)
+            if s.embed_tags and fid != "TXXX" and fid in taken:
+                clashes.append(f"“{t}” and “{taken[fid]}” are both bound to {FRAME_CHOICES[fid]} ({fid}): “{t}” is written as a custom field.")
+            taken.setdefault(fid, t)
+        self.text_msg.setText("\n".join(clashes))
+        self.text_msg.setVisible(bool(clashes))
         folder_problem = output_dir_problem(self.folder.text())
         self.folder_msg.setText(folder_problem or "")
         self.folder_msg.setVisible(bool(folder_problem))

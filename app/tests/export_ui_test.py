@@ -102,7 +102,7 @@ wf = media.open_pcm(media.audio_path(episode, 0), 1, 16)
 for c in (c1, c2, c3):
     w = read_wav(Path(c.export_path))
     assert np.array_equal(w["frames"], wf[int(round(c.start * 44100)):int(round(c.end * 44100))])
-    assert w["info"]["ICMT"] == c.text and w["tags"]["character"] == c.tags["character"]
+    assert [f.text for f in w["id3"] if f.id == "USLT"] == [c.text] and w["tags"]["character"] == c.tags["character"]
 assert read_wav(Path(c2.export_path))["tags"] == {"character": "Husk", "overlap": True}
 assert not warned and "Export finished" in win.statusBar().currentMessage() and "export" not in win._job_state
 print("ok   Export button: non-blocking; library goes queued/exporting -> '✓ Exported'; samples identical to the waveform")
@@ -141,7 +141,7 @@ win.project.remove(bad)
 print("ok   an unwritable clip shows '✗ Failed' with the reason")
 
 # --- changing the settings marks everything Changed; a stereo 24-bit export decodes first, without blocking
-s = win.project.export_settings.copy(); s.update(channels=2, bit_depth=24, text_field="title", embed_tags=False)
+s = win.project.export_settings.copy(); s.update(channels=2, bit_depth=24, embed_tags=False)
 win.project.set_export_settings(s)
 assert all(label(c) == "● Changed" for c in (c1, c2, c3))
 win.clips.export_btn.click()
@@ -154,7 +154,7 @@ for _ in range(900):
         break
 assert seen_pcm and all(label(c) == "✓ Exported" for c in (c1, c2, c3))
 w = read_wav(Path(c2.export_path))
-assert (w["channels"], w["bits"], w["rate"]) == (2, 24, 44100) and w["info"] == {"INAM": "Second line"} and w["tags"] is None
+assert (w["channels"], w["bits"], w["rate"]) == (2, 24, 44100) and [f.text for f in w["id3"] if f.id == "USLT"] == ["Second line"] and w["tags"] is None and "tags" not in w["meta"]
 print("ok   new settings: clips show Changed; stereo 24-bit audio is prepared in the background, then exported")
 
 # --- a missing export folder is reported, not crashed on
@@ -225,7 +225,11 @@ dlg = ExportSettingsDialog(win.project, win)
 assert dlg.bits.isVisibleTo(dlg) and not dlg.quality.isVisibleTo(dlg)
 dlg.format.setCurrentIndex(dlg.format.findData("mp3"))
 assert dlg.quality.isVisibleTo(dlg) and not dlg.bits.isVisibleTo(dlg)
-assert "COMM" in dlg.text_field.itemText(1) and "TIT2" in dlg.text_field.itemText(2)
+# the table of what goes where: the text rows are fixed and read-only, then one row per tag with its field
+assert [dlg.fields.item(r, 0).text() for r in range(2)] == ["Clip text", "Synced text"]
+assert "USLT" in dlg.fields.item(0, 1).text() and "SYLT" in dlg.fields.item(1, 1).text() and "not written yet" in dlg.fields.item(1, 1).text()
+assert all(not (dlg.fields.item(r, c).flags() & Qt.ItemIsEditable) and dlg.fields.cellWidget(r, c) is None for r in range(2) for c in (0, 1))
+assert [dlg.fields.item(r, 0).text() for r in range(2, dlg.fields.rowCount())] == win.project.tag_types
 dlg.quality.setCurrentIndex(dlg.quality.findData("v2"))
 assert dlg.settings().format == "mp3" and dlg.settings().mp3_quality == "v2"
 dlg.show(); dlg.grab().save(shot.replace(".png", "_dialog_mp3.png"))
@@ -263,6 +267,39 @@ assert Path(dup.export_path) != Path(tgt.export_path) and Path(dup.export_path).
 right_click(tgt, "Open containing folder")
 right_click(tgt, "Open in system app")
 assert opened == [("folder", Path(tgt.export_path)), ("open", Path(tgt.export_path))], opened
+
+# inside the sandbox the export folder is a document-portal path the host's file manager doesn't know: ask the portal for the real one
+real_getxattr, real_warning = os.getxattr, QMessageBox.warning
+doc = Path("/run/flatpak/doc/Abc123/f/Rolf_x.wav")
+def portal_says(known):   # a stand-in for the portal's mount: it names the folder `f`, or nothing
+    def getxattr(path, name):
+        assert name == "user.document-portal.host-path"
+        if known and str(path) in known: return known[str(path)]
+        raise OSError(61, "No data available")
+    return getxattr
+warned = []
+QMessageBox.warning = lambda *a, **k: warned.append(a[2]) or QMessageBox.Ok
+try:
+    os.getxattr = portal_says({"/run/flatpak/doc/Abc123/f": b"/home/u/Music/f"})
+    assert desktop.host_path(doc) == Path("/home/u/Music/f/Rolf_x.wav"), desktop.host_path(doc)   # nearest granted folder + the rest
+    os.getxattr = portal_says({str(doc): "/home/u/Music/other/Rolf_x.wav".encode()})
+    assert desktop.host_path(doc) == Path("/home/u/Music/other/Rolf_x.wav")                         # the file itself, if the portal names it
+    assert desktop.host_path(Path("/home/u/Music/f/a.wav")) == Path("/home/u/Music/f/a.wav"), "not behind the portal: unchanged"
+    os.getxattr = portal_says(None)
+    assert desktop.host_path(doc) is None
+    assert desktop.mount_path(doc) == Path(f"/run/user/{os.getuid()}/doc/Abc123/f/Rolf_x.wav") and desktop.mount_path(Path("/x/y")) == Path("/x/y")
+    # the menu: the real path when the portal gives it, no popup; else the portal's mount, with a warning
+    opened.clear()
+    os.getxattr = portal_says({"/run/flatpak/doc/Abc123/f": b"/home/u/Music/f"})
+    win.clips._show_in_folder(doc)
+    assert opened == [("folder", Path("/home/u/Music/f/Rolf_x.wav"))] and not warned, (opened, warned)
+    opened.clear(); os.getxattr = portal_says(None)
+    win.clips._show_in_folder(doc)
+    assert opened == [("folder", desktop.mount_path(doc))] and len(warned) == 1 and str(doc) in warned[0], (opened, warned)
+    opened.clear()
+finally:
+    os.getxattr, QMessageBox.warning = real_getxattr, real_warning
+print("ok   Open containing folder in the sandbox: the portal's real path, else its mount with a warning")
 fresh = win.project.add(Clip(75.0, 76.0, "Never exported", True, {"character": "Husk"}))
 win.project.auto_export = False
 fresh.export_path = None
@@ -353,6 +390,39 @@ win.clips.delete.click() if False else win.delete_clip(victim2)
 assert victim2 not in win.project.clips and not gone.exists() and len(win.project.clips) == n - 2, "both: clip and file removed"
 assert len(prompts) == 3
 print("ok   deleting a clip with an exported file asks: clip and file / clip only / cancel (each time)")
+
+# --- Yes/No labels: the Tags menu dialog sets them; the settings dialog warns when a tag is written to the text's field
+from PySide6.QtWidgets import QDialog, QLineEdit
+real_exec = QDialog.exec
+def fake_exec(self):   # fills in the labels dialog as a user would, instead of waiting for one
+    if self.windowTitle() == "Yes/No labels":
+        edits = self.findChildren(QLineEdit)
+        edits[0].setText("Overlapping"); edits[1].setText("Alone")
+        return 1
+    return real_exec(self)
+QDialog.exec = fake_exec
+try:
+    win.edit_bool_labels()
+finally:
+    QDialog.exec = real_exec
+assert win.project.bool_labels("overlap") == ("Overlapping", "Alone") and win.project.tag_labels == {"overlap": ["Overlapping", "Alone"]}
+assert win.project.set_bool_labels("overlap", "", "") is None and win.project.tag_labels == {}
+pr = Project(episode); pr.add_tag_type("title"); pr.add_tag_type("Artist"); pr.add_tag_type("scene")
+d2 = ExportSettingsDialog(pr, win); d2.embed_tags.setChecked(True)
+combo = lambda t: d2.fields.cellWidget(2 + pr.tag_types.index(t), 1)
+assert [combo(t).currentData() for t in ("title", "Artist", "scene")] == ["TIT2", "TPE1", "TXXX"], "pre-filled by the tag's name"
+assert d2.settings().tag_frames == {} and not d2.text_msg.isVisibleTo(d2), "defaults are not stored"
+d2._set(combo("scene"), "TIT2")
+assert d2.settings().tag_frames == {"scene": "TIT2"} and d2.text_msg.isVisibleTo(d2) and "scene" in d2.text_msg.text() and "title" in d2.text_msg.text()
+d2.embed_tags.setChecked(False)
+assert not d2.text_msg.isVisibleTo(d2) and not combo("title").isEnabled(), "no tags in the file: nothing to bind"
+d2.embed_tags.setChecked(True); d2._set(combo("scene"), "COMM"); d2._set(combo("title"), "TXXX")
+assert d2.settings().tag_frames == {"scene": "COMM", "title": "TXXX"} and not d2.text_msg.isVisibleTo(d2) and combo("title").isEnabled()
+pr.export_settings = d2.settings().to_json()
+d3 = ExportSettingsDialog(pr, win)
+row = lambda t: d3.fields.cellWidget(2 + pr.tag_types.index(t), 1).currentData()
+assert row("title") == "TXXX" and row("scene") == "COMM" and row("Artist") == "TPE1", "bindings are remembered"
+print("ok   Tags ▸ Yes/No labels sets a tag's words; the settings dialog binds tags to ID3 fields (text rows fixed) and warns about a field used twice")
 
 # --- the states survive closing and reopening; a deleted file shows as not exported
 win.project.save()

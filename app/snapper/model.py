@@ -62,6 +62,7 @@ class Project(QObject):
         self.path = path or self.default_path(media)
         self.tag_types: list[str] = ["character"]
         self.tag_kinds: dict[str, str] = {"character": STRING}
+        self.tag_labels: dict[str, list[str]] = {}    # Yes/No tag -> [Yes label, No label], when changed from the default
         self.tag_values: dict[str, list[str]] = {}  # first-seen order, so number-key shortcuts stay stable
         self.clips: list[Clip] = []
         self.audio_track = 0                         # which audio track of the episode is being cut
@@ -107,6 +108,8 @@ class Project(QObject):
         self.tag_types = d.get("tag_types", self.tag_types)
         self.tag_kinds = {t: d.get("tag_kinds", {}).get(t, STRING) for t in self.tag_types}
         self.tag_values = d.get("tag_values", {})
+        self.tag_labels = {t: list(v) for t, v in d.get("tag_labels", {}).items()
+                           if self.tag_kinds.get(t) == BOOL and len(v) == 2 and all(isinstance(x, str) and x.strip() for x in v)}
         self.audio_track = d.get("audio_track", 0)
         self.proxy_enabled = d.get("proxy_enabled", True)
         self.auto_export = bool(d.get("auto_export", False))
@@ -139,6 +142,7 @@ class Project(QObject):
             "audio_track": self.audio_track, "selected_clip": self.selected_clip,
             "position": round(self.position, 3), "pending": self.pending,
             "tag_types": self.tag_types, "tag_kinds": self.tag_kinds, "tag_values": self.tag_values,
+            "tag_labels": self.tag_labels,
             "next_id": self._next_id, "clips": [c.to_json() for c in self.clips],
             "transcript": self.transcript, "transcript_source": self.transcript_source, "export_settings": self.export_settings}, indent=1))
         os.replace(tmp, self.path)
@@ -214,10 +218,46 @@ class Project(QObject):
         """The choices offered by the library filter for a tag."""
         kind = self.tag_kinds.get(tag, STRING)
         if kind == BOOL:
-            return ["Yes", "No"]
+            return list(self.bool_labels(tag))
         if kind == INT:
             return [str(v) for v in sorted({c.tags[tag] for c in self.clips if tag in c.tags})]
         return self.values(tag)
+
+    def bool_labels(self, tag: str) -> tuple[str, str]:
+        """The words for a Yes/No tag's two answers (Yes, No). They stand for the tag everywhere it becomes text: the
+        library, the filters, file and folder names and the exported file's tags."""
+        yes, no = self.tag_labels.get(tag) or default_bool_labels(tag)
+        return yes, no
+
+    def all_bool_labels(self) -> dict[str, tuple[str, str]]:
+        return {t: self.bool_labels(t) for t, k in self.tag_kinds.items() if k == BOOL}
+
+    @staticmethod
+    def bool_labels_problem(tag: str, yes: str, no: str) -> Optional[str]:
+        """Why these cannot be a Yes/No tag's two labels, or None. A label is never empty: leaving one empty means the default."""
+        yes, no = clean_tag(yes) or default_bool_labels(tag)[0], clean_tag(no) or default_bool_labels(tag)[1]
+        if yes.lower() == no.lower():
+            return "The two answers need different names."
+        return None
+
+    def set_bool_labels(self, tag: str, yes: str, no: str) -> Optional[str]:
+        """Sets a Yes/No tag's labels (an empty one gets its default). Returns why it was refused, or None."""
+        if self.tag_kinds.get(tag) != BOOL:
+            return f"{tag} is not a Yes/No tag."
+        problem = self.bool_labels_problem(tag, yes, no)
+        if problem:
+            return problem
+        default = default_bool_labels(tag)
+        new = [clean_tag(yes) or default[0], clean_tag(no) or default[1]]
+        if new == list(self.bool_labels(tag)):
+            return None
+        if new == list(default):
+            self.tag_labels.pop(tag, None)
+        else:
+            self.tag_labels[tag] = new
+        self.structure_changed.emit()
+        self.dirty.emit()
+        return None
 
     RESERVED_TAG_NAMES = ("id", "n", "start", "text")   # file-name template tokens
 
@@ -228,6 +268,8 @@ class Project(QObject):
             return "The name is empty."
         if clean_tag(name) != name.strip():
             return INVALID_HELP_TEXT
+        if name.strip().lower() == "snpr":
+            return "'snpr' is the name of the field that holds all of a file's tags as JSON."
         if name.strip().lower() in cls.RESERVED_TAG_NAMES:
             return f"'{name.strip()}' is reserved for file naming ({', '.join(cls.RESERVED_TAG_NAMES)})."
         return None
@@ -258,12 +300,16 @@ class Project(QObject):
         self.dirty.emit()
 
 
+def default_bool_labels(tag: str) -> tuple[str, str]:
+    return f"{tag}-yes", f"{tag}-no"
+
+
 def tag_text(project: Project, clip: Clip, tag: str) -> str:
     """A clip's tag value as shown in the library and matched by its filters."""
     v = clip.tags.get(tag)
     kind = project.tag_kinds.get(tag, STRING)
     if kind == BOOL:
-        return "Yes" if v else "No"
+        return project.bool_labels(tag)[0 if v else 1]
     return "" if v is None else str(v)
 
 

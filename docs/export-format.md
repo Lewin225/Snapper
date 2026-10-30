@@ -1,6 +1,6 @@
-# Export format (draft, format version 2)
+# Export format (draft, format version 3)
 
-Status: **draft for discussion, not implemented.** This describes what an exported clip should contain so that every format
+Status: **format version 3, implemented in `app/snapper/id3.py` and `export.py` (`clip_tag`), except the timed-text parts, which wait for the chunk editor.** This describes what an exported clip should contain so that every format
 (WAV, MP3, anything added later) carries the same information in the same way, and so that timed text (see "Timed text chunks") can
 be added without redoing it. "Today" notes say what `app/snapper/export.py` does now. Choices that are still open are listed at the end.
 
@@ -58,22 +58,19 @@ So every reader and writer treats `chunks` as optional and as arbitrary in size.
 
 ### Clip text
 
-Written to the field chosen in Export Settings, as the real standard field:
-
-| Choice | ID3v2.3 frame (MP3, and the WAV `ID3 ` chunk) |
-|---|---|
-| Title | `TIT2` |
-| Comment | `COMM` |
-| Subject | `TIT3` (subtitle) |
-
-*Today:* only Title is a standard frame in MP3. Comment is written as a custom `TXXX:comment` and Subject as `TXXX:subtitle`,
-because ffmpeg's tag table has no entry for them. The new writer writes the standard frames.
+Always written as the lyrics, `USLT` (ID3v2.3, in MP3 and in the WAV `ID3 ` chunk): that is the field players show as the text or
+captions. It is not a setting. The same text with the time of each word goes in `SYLT` once words can be timed by hand (see "Timed text
+chunks"); Export Settings lists both rows, read-only, in the table of what goes where, the second marked "not written yet". Because the
+text has its own frame, no tag competes with it for a field (format version 2 let the settings send the text to Title, Comment or
+Subtitle, which made a tag and the text fight over one frame).
 
 ### Tags
 
 Each tag gets **its own field**, so a player can read it.
 
-- A tag whose name (case-insensitive) is a well-known one goes to the standard field:
+- Where a tag goes is set in the table in Export Settings (one row per tag). Until the user changes a row, a tag whose name
+  (case-insensitive) is a well-known one is bound to the standard field (`date` and `year` only when the value is a four-digit year; if two tags are bound to one frame, the first gets it, the other becomes a `TXXX` frame and the dialog says so). The choices are
+  Custom field (`TXXX`), Title, Artist, Album, Genre, Track, Year, Copyright, Comment and Subtitle. Only the rows that differ from the default are stored in the settings (`tag_frames`):
 
   | Tag name | ID3v2.3 frame |
   |---|---|
@@ -87,8 +84,8 @@ Each tag gets **its own field**, so a player can read it.
   | `copyright` | `TCOP` |
 
   (The list is a proposal; it can grow. Names are matched exactly, never by guessing.)
-- Any other tag becomes a custom text frame, `TXXX` with the tag's name as the description (`TXXX:character`), keeping the
-  name's capitalisation.
+- Any other tag, or one bound to Custom field, becomes a custom text frame, `TXXX` with the tag's name as the description
+  (`TXXX:character`), keeping the name's capitalisation.
 - Every tag is also in the `snpr` JSON, whatever field it went to (a tag named `artist` is both `TPE1` and in the JSON), with its real type.
 - Values are text: strings as they are, integers in decimal. A Yes/No tag is written as its **label**, see "Yes/No labels" below.
 - Character set: ISO-8859-1 when the text fits, otherwise UTF-16 with a byte-order mark (ID3v2.3, which Windows and older players read).
@@ -101,7 +98,7 @@ the ID3 field, the `{tag}` file-name token, the tag folders and the library colu
 
 - Each Yes/No tag type lets the user set the two strings. If they are not set, the labels are `<tagname>-yes` and `<tagname>-no`
   (for a tag called `shouting`: `shouting-yes`, `shouting-no`), which also reads sensibly in a folder name.
-- Both labels are written, so an unticked tag is written too (as its No label), where earlier drafts left it out.
+- Both labels are written, so an unticked tag is written too (as its No label), where earlier drafts left it out. A label has no invalid path characters, and the two must differ.
 - The `snpr` JSON keeps the real value (`true` / `false`), not the label.
 - Changing a label changes the file names, folders and file tags that use it, so affected clips re-export (the signature includes the label).
 - A label is never empty (a Yes/No tag is a value, so both answers have a name). Clearing one puts the default back.
@@ -122,7 +119,7 @@ tools and scripts; other software is not expected to understand it, only to leav
 ### MP3
 
 One ID3v2.3 tag at the start of the file, written by Snapper (ffmpeg encodes only the audio, with its own tag writing off). Frames
-in this order: clip text, standard-named tags, custom `TXXX` tags, `TXXX:snpr`, then (future, only when there are chunks) `SYLT` and `USLT`.
+in this order: the lyrics (`USLT`), the tags bound to standard fields, custom `TXXX` tags, `TXXX:snpr`, then (future, only when there are chunks) `SYLT`, `CTOC` and `CHAP`.
 *Today* the tags go on ffmpeg's command line, which caps them at about 131,000 characters and fails with "Argument list too long"
 above that; writing the tag ourselves removes the limit.
 
@@ -167,7 +164,7 @@ transcription) describes spoken word more exactly and Kid3 offers it, but whethe
 
 ## Compatibility and migration
 
-- Format version 2 changes the signature input, so existing clips show as out of date and re-export once.
+- Format versions 2 and 3 change the signature input, so existing clips show as out of date and re-export once. Version 3 moves the clip text from the field chosen in the settings (default `COMM`) to `USLT`; an old project's text-field choice is ignored.
 - WAV changes the most: the `LIST/INFO` and `snpr` chunks go, and everything moves into the `ID3 ` chunk. A reader of old WAV files has to
   fall back to those two chunks when there is no ID3 chunk (Snapper's `read_wav` should keep doing so). Scripts that read the old `snpr`
   chunk must read `TXXX:snpr` from the ID3 tag instead; MP3 scripts are unaffected.
@@ -176,7 +173,7 @@ transcription) describes spoken word more exactly and Kid3 offers it, but whethe
 ## Open decisions
 
 1. **How a tag picks its field:** decided: by name (as above), and every tag is also in the `snpr` JSON regardless.
-2. **Collisions:** decided: if a `title` tag and the clip-text field both target the title, the tag wins and the settings dialog warns.
+2. **Collisions:** decided: the text is always `USLT`, so only two tags bound to one field can collide; the first gets it, the other is a custom field and the settings dialog says so.
 3. **Yes/No wording:** decided: two labels per Yes/No tag, defaulting to `<tagname>-yes` / `<tagname>-no`; see "Yes/No labels". Labels may not be empty.
 4. **Keep `snpr`:** yes, as `TXXX:snpr`, for Snapper's own use (decided).
 5. **ID3 version:** decided: 2.3 with UTF-16 (Latin-1 when the text fits), one version for MP3 and WAV.

@@ -20,19 +20,24 @@ from typing import Callable, Optional
 import numpy as np
 from PySide6.QtCore import QObject, QThread, Signal
 
+from . import id3
 from . import media as media_cache
-from .model import BOOL, Clip, Project, tag_text
+from .model import BOOL, Clip, Project, default_bool_labels, tag_text
 from .pathnames import clean_part, has_invalid_chars
 
 FORMATS = ("wav", "mp3")
 SAMPLE_RATES = (44100, 48000, 22050)
 WAV_BIT_DEPTHS = (16, 24, 32)           # 32 is floating point
-# WAV text fields: the LIST/INFO chunk id for each choice offered in the settings
-WAV_TEXT_FIELDS = {"comment": "ICMT", "title": "INAM", "subject": "ISBJ"}
+FORMAT_VERSION = 3                      # of the metadata written into the files (docs/export-format.md); part of every signature
+# The ID3 fields a tag can be written to (the same for MP3 and WAV); TXXX is a custom field named after the tag.
+# The clip text is not a choice: it is always the lyrics (USLT), the synced text is SYLT.
+FRAME_CHOICES = {"TXXX": "Custom field", "TIT2": "Title", "TPE1": "Artist", "TALB": "Album", "TCON": "Genre", "TRCK": "Track",
+                 "TYER": "Year", "TCOP": "Copyright", "COMM": "Comment", "TIT3": "Subtitle"}
+# A tag with one of these names (in any capitals) is bound to that field until the settings say otherwise
+STANDARD_TAG_FRAMES = {"title": "TIT2", "artist": "TPE1", "album": "TALB", "genre": "TCON", "track": "TRCK",
+                       "date": "TYER", "year": "TYER", "comment": "COMM", "copyright": "TCOP"}
 # MP3 quality choices: constant bitrate (kbps) or LAME variable bitrate (v0 best ... v4)
 MP3_QUALITIES = ("320", "256", "192", "160", "128", "v0", "v2", "v4")
-# ID3 frame ffmpeg writes for each text-field choice (comment = COMM, title = TIT2, subject = TIT3 "subtitle")
-MP3_TEXT_FIELDS = {"comment": "comment", "title": "title", "subject": "subtitle"}
 TOKENS = ("id", "n", "start", "text")   # file-name template tokens; every tag name is a token too
 UNTAGGED_FOLDER = "_none"
 DEFAULT_TEMPLATE = "{character}_{text}"
@@ -48,7 +53,7 @@ class ExportSettings:
     sample_rate: int = 44100
     bit_depth: int = 16                  # WAV: 16 or 24 bit integer, 32 bit float
     folder_tags: list[str] = field(default_factory=list)   # first folder, then sub-folders
-    text_field: Optional[str] = "comment"                   # which text field the clip text is written to; None = not written
+    tag_frames: dict[str, str] = field(default_factory=dict)   # tag -> ID3 field, only where it differs from default_frame
     embed_tags: bool = True
     mp3_quality: str = "192"             # MP3: kbps, or v0/v2/v4 for variable bitrate
 
@@ -74,9 +79,18 @@ class ExportSettings:
             s.bit_depth = base.bit_depth
         if s.mp3_quality not in MP3_QUALITIES:
             s.mp3_quality = base.mp3_quality
-        if s.text_field not in WAV_TEXT_FIELDS:
-            s.text_field = None
+        frames = s.tag_frames if isinstance(s.tag_frames, dict) else {}
+        s.tag_frames = {t: f for t, f in frames.items() if isinstance(t, str) and f in FRAME_CHOICES}
         return s
+
+
+def default_frame(tag: str) -> str:
+    """The field a tag goes to unless the settings bind it elsewhere: the standard one for its name, else a custom field."""
+    return STANDARD_TAG_FRAMES.get(tag.lower(), "TXXX")
+
+
+def frame_for(settings: ExportSettings, tag: str) -> str:
+    return settings.tag_frames.get(tag) or default_frame(tag)
 
 
 def output_dir_problem(path: str) -> Optional[str]:
@@ -156,74 +170,121 @@ def plan_files(project: Project, settings: ExportSettings, clips: Optional[list[
     return out
 
 
-def export_signature(clip: Clip, settings: ExportSettings, track: int) -> str:
+def export_signature(clip: Clip, settings: ExportSettings, track: int, labels: Optional[dict] = None) -> str:
     """Identifies everything that decides a clip's exported file. If it differs from the signature stored when the
-    clip was exported, the file is out of date."""
-    payload = {"start": clip.start, "end": clip.end, "track": track, "settings": settings.to_json(),
-               "text": clip.text if settings.text_field else None,
-               "tags": clip.tags if (settings.embed_tags or settings.folder_tags or "{" in settings.name_template) else None}
+    clip was exported, the file is out of date. `labels` maps each Yes/No tag to its two words (they are in the file
+    and its name), see Project.all_bool_labels."""
+    uses_tags = settings.embed_tags or settings.folder_tags or "{" in settings.name_template
+    named = {*settings.folder_tags, *_TOKEN_RE.findall(settings.name_template)}
+    # every Yes/No tag's answer is in the file when tags are embedded; otherwise only the ones the name or folders use
+    used = {t: list(v) for t, v in (labels or {}).items() if settings.embed_tags or t in named}
+    sets = settings.to_json()
+    if not settings.embed_tags:
+        sets["tag_frames"] = {}   # no tags in the file: where they would go changes nothing
+    payload = {"format": FORMAT_VERSION, "start": clip.start, "end": clip.end, "track": track, "settings": sets,
+               "text": clip.text,
+               "tags": clip.tags if uses_tags else None, "labels": used}
     if clip.source != "original":   # absent for the original, so signatures made before isolation existed stay valid
         payload["source"] = clip.source
     return hashlib.sha1(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()[:16]
 
 
-# --------------------------------------------------------------------------- WAV
+# --------------------------------------------------------------------------- the tag
+def clip_tag(clip: Clip, settings: ExportSettings, kinds: dict[str, str], labels: Optional[dict] = None) -> bytes:
+    """The ID3v2.3 tag for a clip (b"" when nothing is to be written): the clip text as the lyrics (USLT),
+    each tag in the field the settings bind it to (see frame_for; a field already taken by an earlier tag, or TXXX, gives
+    a custom frame named after the tag), and
+    the whole of it as JSON in a TXXX frame 'snpr', with the tags' real types. Both answers of a Yes/No tag are written,
+    as the tag's labels. `kinds` maps every tag type to its kind, in order; `labels` is Project.all_bool_labels()."""
+    items = []   # (tag, value for the JSON, text for the frame)
+    if settings.embed_tags:
+        for name, kind in kinds.items():
+            if kind == BOOL:
+                on = bool(clip.tags.get(name))
+                yes, no = (labels or {}).get(name) or default_bool_labels(name)
+                items.append((name, on, yes if on else no))
+            elif clip.tags.get(name) not in (None, ""):
+                items.append((name, clip.tags[name], str(clip.tags[name])))
+        items += [(n, v, str(v)) for n, v in clip.tags.items() if n not in kinds and v not in (None, "")]
+
+    def frame(fid: str, text: str) -> bytes:
+        return id3.comment_frame(text) if fid == "COMM" else id3.text_frame(fid, text)
+
+    used, standard, custom = set(), [], []
+    for name, _value, text in items:
+        fid = frame_for(settings, name)
+        if fid == "TYER" and not re.fullmatch(r"\d{4}", text):   # TYER holds a four-digit year only
+            fid = "TXXX"
+        if fid != "TXXX" and fid not in used:
+            used.add(fid)
+            standard.append(frame(fid, text))
+        else:
+            custom.append(id3.txxx_frame(name, text))
+    frames = [id3.uslt_frame(clip.text)] if clip.text else []
+    frames += standard + custom
+    doc: dict = {"format": FORMAT_VERSION}
+    if clip.text:
+        doc["text"] = clip.text
+    if settings.embed_tags:
+        doc["tags"] = {name: value for name, value, _text in items}
+    if len(doc) > 1:
+        frames.append(id3.txxx_frame("snpr", json.dumps(doc, ensure_ascii=False, sort_keys=True)))
+    return id3.tag(frames) if frames else b""
+
+
+# --------------------------------------------------------------------------- WAV and MP3
 def _chunk(cid: bytes, payload: bytes) -> bytes:
     pad = b"\0" if len(payload) % 2 else b""
     return cid + struct.pack("<I", len(payload)) + payload + pad
 
 
-def encode_mp3(frames: np.ndarray, rate: int, quality: str, target: Path,
-               info: Optional[dict[str, str]] = None, tags: Optional[dict] = None):
-    """Encodes 16-bit `frames` (n, channels) to an MP3 at `target` with ffmpeg's LAME encoder. `info` holds ID3 text
-    frames (ffmpeg metadata key -> text); `tags` goes in a custom 'snpr' text frame (TXXX) as JSON."""
+def encode_mp3(frames: np.ndarray, rate: int, quality: str, target: Path, tag: bytes = b""):
+    """Encodes 16-bit `frames` (n, channels) to an MP3 at `target` with ffmpeg's LAME encoder, then puts the ID3 `tag`
+    in front. ffmpeg writes no tags of its own (it still leaves an empty tag header, which is cut off)."""
     n, ch = frames.shape
     q = ["-q:a", quality[1:]] if quality.startswith("v") else ["-b:a", f"{quality}k"]
-    meta = []
-    for key, text in {**(info or {}), **({"snpr": json.dumps(tags, ensure_ascii=False)} if tags is not None else {})}.items():
-        meta += ["-metadata", f"{key}={text}"]
     cmd = ["ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "s16le", "-ar", str(rate), "-ac", str(ch), "-i", "-",
-           "-c:a", "libmp3lame", *q, *meta, "-id3v2_version", "3", "-f", "mp3", str(target)]
+           "-c:a", "libmp3lame", *q, "-map_metadata", "-1", "-write_id3v2", "0", "-fflags", "+bitexact", "-f", "mp3", str(target)]
     r = subprocess.run(cmd, input=frames.astype("<i2").tobytes(), capture_output=True)
     if r.returncode:
         target.unlink(missing_ok=True)
         raise ValueError(f"MP3 encoding failed: {r.stderr.decode(errors='replace').strip()[-200:]}")
+    audio = target.read_bytes()
+    target.write_bytes(tag + audio[id3.size_of(audio):])
 
 
-def wav_bytes(frames: np.ndarray, rate: int, bits: int, info: Optional[dict[str, str]] = None,
-              tags: Optional[dict] = None) -> bytes:
-    """A WAV file for `frames` (shape (n, channels); int16 for 16 bit, int32 for 24 bit, float32 for 32 bit).
-    `info` fields go in a LIST/INFO chunk (id -> text), `tags` in a custom 'snpr' chunk as JSON."""
+def wav_bytes(frames: np.ndarray, rate: int, bits: int, tag: bytes = b"") -> bytes:
+    """A WAV file for `frames` (shape (n, channels); int16 for 16 bit, int32 for 24 bit, float32 for 32 bit). The ID3
+    `tag`, if any, goes in an 'ID3 ' chunk after the audio, the one place the file keeps its metadata."""
     n, ch = frames.shape
     if bits == 16:
-        data, tag, width = frames.astype("<i2").tobytes(), 1, 2
+        data, fmt_tag, width = frames.astype("<i2").tobytes(), 1, 2
     elif bits == 24:   # the top 24 bits of the 32 bit decode, little endian
         raw = frames.astype("<i4").view(np.uint8).reshape(n, ch, 4)[:, :, 1:]
-        data, tag, width = raw.tobytes(), 1, 3
+        data, fmt_tag, width = raw.tobytes(), 1, 3
     elif bits == 32:
-        data, tag, width = frames.astype("<f4").tobytes(), 3, 4
+        data, fmt_tag, width = frames.astype("<f4").tobytes(), 3, 4
     else:
         raise ValueError(f"unsupported bit depth {bits}")
-    fmt = struct.pack("<HHIIHH", tag, ch, rate, rate * ch * width, ch * width, width * 8)
-    if tag == 3:   # floating point WAV needs the extension size and a fact chunk
+    fmt = struct.pack("<HHIIHH", fmt_tag, ch, rate, rate * ch * width, ch * width, width * 8)
+    if fmt_tag == 3:   # floating point WAV needs the extension size and a fact chunk
         fmt += struct.pack("<H", 0)
     body = b"WAVE" + _chunk(b"fmt ", fmt)
-    if tag == 3:
+    if fmt_tag == 3:
         body += _chunk(b"fact", struct.pack("<I", n))
     body += _chunk(b"data", data)
-    if info:
-        sub = b"".join(_chunk(cid.encode("ascii"), text.encode("utf-8") + b"\0") for cid, text in info.items())
-        body += _chunk(b"LIST", b"INFO" + sub)
-    if tags is not None:
-        body += _chunk(b"snpr", json.dumps(tags, ensure_ascii=False, sort_keys=True).encode("utf-8"))
+    if tag:
+        body += _chunk(b"ID3 ", tag)
     return b"RIFF" + struct.pack("<I", len(body)) + body
 
 
 def read_wav(path: Path) -> dict:
-    """Reads back a WAV written by `wav_bytes` (used by the tests): format, frames and the extra chunks."""
+    """Reads back a WAV written by `wav_bytes` (used by the tests): format, frames, the ID3 frames (`id3`), and from them
+    the clip's `tags` and `meta` (the 'snpr' JSON). Files from before format 2 kept this in a LIST/INFO chunk (`info`)
+    and a 'snpr' chunk; those are still read."""
     raw = path.read_bytes()
     assert raw[:4] == b"RIFF" and raw[8:12] == b"WAVE" and struct.unpack("<I", raw[4:8])[0] == len(raw) - 8
-    pos, out = 12, {"info": {}, "tags": None}
+    pos, out = 12, {"info": {}, "tags": None, "meta": None, "id3": []}
     while pos < len(raw):
         cid, size = raw[pos:pos + 4], struct.unpack("<I", raw[pos + 4:pos + 8])[0]
         body = raw[pos + 8:pos + 8 + size]
@@ -231,6 +292,8 @@ def read_wav(path: Path) -> dict:
             out["format"], out["channels"], out["rate"], _br, _ba, out["bits"] = struct.unpack("<HHIIHH", body[:16])
         elif cid == b"data":
             out["data"] = body
+        elif cid in (b"ID3 ", b"id3 "):
+            out["id3"] = id3.parse(body)
         elif cid == b"LIST" and body[:4] == b"INFO":
             p = 4
             while p < len(body):
@@ -240,6 +303,10 @@ def read_wav(path: Path) -> dict:
         elif cid == b"snpr":
             out["tags"] = json.loads(body.decode("utf-8"))
         pos += 8 + size + (size % 2)
+    snpr = next((f.text for f in out["id3"] if f.id == "TXXX" and f.desc == "snpr"), None)
+    if snpr is not None:
+        out["meta"] = json.loads(snpr)
+        out["tags"] = out["meta"].get("tags")
     ch, bits = out["channels"], out["bits"]
     if bits == 16:
         out["frames"] = np.frombuffer(out["data"], "<i2").reshape(-1, ch)
@@ -266,7 +333,7 @@ def clip_frames(pcm: np.ndarray, rate: int, clip: Clip) -> np.ndarray:
 
 
 def write_one(clip: Clip, rel: Path, tag_kinds: dict[str, str], settings: ExportSettings, pcm: np.ndarray,
-              out_dir: Path) -> Path:
+              out_dir: Path, labels: Optional[dict] = None) -> Path:
     """Writes one clip to out_dir/rel and returns the file's path. Raises ValueError if the clip cannot be written."""
     out_dir = out_dir.resolve()
     target = (out_dir / rel).resolve()
@@ -275,16 +342,13 @@ def write_one(clip: Clip, rel: Path, tag_kinds: dict[str, str], settings: Export
     frames = clip_frames(pcm, settings.sample_rate, clip)
     if len(frames) == 0:
         raise ValueError(f"{rel}: no audio in this time range")
-    mp3 = settings.format == "mp3"
-    info_id = (MP3_TEXT_FIELDS if mp3 else WAV_TEXT_FIELDS).get(settings.text_field or "")
-    info = {info_id: clip.text} if info_id and clip.text else None
-    tags = {t: (True if tag_kinds.get(t) == BOOL else v) for t, v in clip.tags.items()} if settings.embed_tags else None
+    tag = clip_tag(clip, settings, tag_kinds, labels)
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_name(target.name + ".tmp")
-    if mp3:
-        encode_mp3(frames, settings.sample_rate, settings.mp3_quality, tmp, info, tags)
+    if settings.format == "mp3":
+        encode_mp3(frames, settings.sample_rate, settings.mp3_quality, tmp, tag)
     else:
-        tmp.write_bytes(wav_bytes(frames, settings.sample_rate, settings.bit_depth, info, tags))
+        tmp.write_bytes(wav_bytes(frames, settings.sample_rate, settings.bit_depth, tag))
     os.replace(tmp, target)
     return target
 
@@ -311,7 +375,7 @@ def remove_exported(old: Path, out_dir: Path):
 
 def write_plan(plan: list[tuple[Clip, Path]], tag_kinds: dict[str, str], settings: ExportSettings, pcm: np.ndarray,
                out_dir: Path, progress: Optional[Callable[[float], None]] = None,
-               cancelled: Callable[[], bool] = lambda: False) -> ExportResult:
+               cancelled: Callable[[], bool] = lambda: False, labels: Optional[dict] = None) -> ExportResult:
     """Writes a whole plan (a batch export). `pcm` is the decoded audio at the settings' rate/channels/depth."""
     result = ExportResult()
     for i, (clip, rel) in enumerate(plan):
@@ -319,7 +383,7 @@ def write_plan(plan: list[tuple[Clip, Path]], tag_kinds: dict[str, str], setting
             result.cancelled = True
             break
         try:
-            result.files.append(write_one(clip, rel, tag_kinds, settings, pcm, out_dir))
+            result.files.append(write_one(clip, rel, tag_kinds, settings, pcm, out_dir, labels))
         except ValueError as e:
             result.skipped.append(str(e))
         if progress:
@@ -330,7 +394,8 @@ def write_plan(plan: list[tuple[Clip, Path]], tag_kinds: dict[str, str], setting
 def export_clips(project: Project, settings: ExportSettings, pcm: np.ndarray, out_dir: Path,
                  progress: Optional[Callable[[float], None]] = None,
                  cancelled: Callable[[], bool] = lambda: False) -> ExportResult:
-    return write_plan(plan_files(project, settings), dict(project.tag_kinds), settings, pcm, out_dir, progress, cancelled)
+    return write_plan(plan_files(project, settings), dict(project.tag_kinds), settings, pcm, out_dir, progress, cancelled,
+                      project.all_bool_labels())
 
 
 # --------------------------------------------------------------------------- the background queue
@@ -349,13 +414,13 @@ class _Worker(QThread):
             job = self.jobs.get()
             if job is None:
                 return
-            clip, rel, kinds, settings, pcm_path, old, old_root = job
+            clip, rel, kinds, labels, settings, pcm_path, old, old_root = job
             self.started_clip.emit(clip.id)
             try:
                 if pcm_path not in self._pcm:
                     self._pcm[pcm_path] = media_cache.open_pcm(Path(pcm_path), settings.channels, settings.source_bits)
                 out_dir = Path(settings.output_dir)
-                target = write_one(clip, rel, kinds, settings, self._pcm[pcm_path], out_dir)
+                target = write_one(clip, rel, kinds, settings, self._pcm[pcm_path], out_dir, labels)
                 if old and old_root and Path(old).resolve() != target:   # the new copy exists: drop the old one
                     remove_exported(Path(old), Path(old_root))
                 self.finished_clip.emit(clip.id, True, str(target))
@@ -410,7 +475,7 @@ class ExportManager(QObject):
         if s is None:
             return None
         if clip.id not in self._sig:
-            self._sig[clip.id] = export_signature(clip, s, self.project.audio_track)
+            self._sig[clip.id] = export_signature(clip, s, self.project.audio_track, self.project.all_bool_labels())
         return self._sig[clip.id]
 
     def state(self, clip: Clip) -> str:
@@ -473,11 +538,11 @@ class ExportManager(QObject):
             self._worker.finished_clip.connect(self._on_finished)
             self._worker.start()
         plan = {c.id: rel for c, rel in plan_files(self.project, settings, clips)}
-        kinds = dict(self.project.tag_kinds)
+        kinds, labels = dict(self.project.tag_kinds), self.project.all_bool_labels()
         for c in clips:
             snap = replace(c, tags=dict(c.tags))   # the clip may be edited while it waits
-            self._sigs_at_submit[c.id] = export_signature(c, settings, self.project.audio_track)
-            self._worker.jobs.put((snap, plan[c.id], kinds, settings, str(pcm_paths[c.source]), c.export_path,
+            self._sigs_at_submit[c.id] = export_signature(c, settings, self.project.audio_track, labels)
+            self._worker.jobs.put((snap, plan[c.id], kinds, labels, settings, str(pcm_paths[c.source]), c.export_path,
                                    self._old_root(c.id, c.export_path, settings)))
 
     # The user's answer about a clip's old file, until that clip has been exported again: True = delete it once the new

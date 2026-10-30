@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QApplication
 
 from snapper.clips_panel import ClipsPanel
 from snapper.editor import INT_UNSET, ClipEditor
-from snapper.model import Clip, ClipFilter, ClipTableModel, Project
+from snapper.model import Clip, ClipFilter, ClipTableModel, Project, tag_text
 
 app = QApplication(sys.argv)
 tmp = Path(tempfile.mkdtemp())
@@ -48,18 +48,34 @@ c = p.add(Clip(1.0, 2.0, "a", True, dict(ed.clip.tags)))
 p.add(Clip(3.0, 4.0, "b", True, {"character": "Alastor", "loudness": 5}))
 p.add(Clip(5.0, 6.0, "c", True, {"character": "Husk", "overlap": True}))
 assert p.values("character") == ["Alastor", "Husk"] and "loudness" not in p.tag_values
-assert p.filter_values("overlap") == ["Yes", "No"] and p.filter_values("loudness") == ["3", "5"]
+assert p.filter_values("overlap") == ["overlap-yes", "overlap-no"] and p.filter_values("loudness") == ["3", "5"]   # a Yes/No tag is named by its labels
 model = ClipTableModel(p); flt = ClipFilter(model)
 assert "Flags" not in model.columns() and model.columns() == ["#", "In", "Dur", "character", "loudness", "overlap", "Text", "Export"]
 def shown(): return [flt.index(r, 0).data() for r in range(flt.rowCount())]
 assert shown() == [1, 2, 3]
-flt.set_filter("overlap", "Yes"); assert shown() == [1, 3]
-flt.set_filter("overlap", "No"); assert shown() == [2]
+flt.set_filter("overlap", "overlap-yes"); assert shown() == [1, 3]
+flt.set_filter("overlap", "overlap-no"); assert shown() == [2]
 flt.set_filter("overlap", None); flt.set_filter("loudness", "5"); assert shown() == [2]
 flt.set_filter("loudness", None)
 col = model.columns().index("overlap")
 assert model.index(0, col).data() == "✓" and model.index(1, col).data() == ""
 print("ok   library columns and filters for int and bool")
+
+# --- the two words of a Yes/No tag
+assert p.bool_labels("overlap") == ("overlap-yes", "overlap-no") and p.tag_labels == {}
+assert tag_text(p, c, "overlap") == "overlap-yes" and tag_text(p, p.clips[1], "overlap") == "overlap-no"
+assert p.set_bool_labels("overlap", "Overlapping", "Alone") is None
+assert p.bool_labels("overlap") == ("Overlapping", "Alone") and p.filter_values("overlap") == ["Overlapping", "Alone"]
+assert tag_text(p, c, "overlap") == "Overlapping"
+flt.set_filter("overlap", "Overlapping"); assert shown() == [1, 3]; flt.set_filter("overlap", None)
+assert p.set_bool_labels("overlap", "Same", "same") and p.bool_labels("overlap") == ("Overlapping", "Alone"), "two answers need two names"
+assert p.set_bool_labels("loudness", "a", "b"), "only Yes/No tags have labels"
+assert p.set_bool_labels("overlap", "Over/lapping:", "") is None and p.bool_labels("overlap") == ("Overlapping", "overlap-no"), \
+    "invalid characters are removed and an empty label means the default"
+assert p.set_bool_labels("overlap", "", "") is None and p.tag_labels == {} and p.bool_labels("overlap") == ("overlap-yes", "overlap-no")
+assert Project.tag_name_problem("snpr") and Project.tag_name_problem("SNPR"), "the JSON field's name is reserved"
+p.set_bool_labels("overlap", "Overlapping", "Alone")
+print("ok   Yes/No labels: defaults, custom words in the library and filters, never empty, saved with the project")
 
 panel = ClipsPanel(p)   # builds a filter dropdown per tag; renaming only for text tags
 assert sum(1 for _ in range(panel.filter_row.count())) == 3 + 1
@@ -68,6 +84,7 @@ print("ok   library panel builds")
 p.save()
 q = Project(media)
 assert q.tag_kinds == p.tag_kinds and [c.tags for c in q.clips] == [c.tags for c in p.clips]
+assert q.tag_labels == {"overlap": ["Overlapping", "Alone"]} and q.bool_labels("overlap") == ("Overlapping", "Alone")
 print("ok   saved and reloaded")
 
 # --- a file from before tag types: flags move into bool tags, only the ones actually used

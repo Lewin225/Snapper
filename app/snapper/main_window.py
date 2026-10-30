@@ -23,7 +23,7 @@ from .tape_scrub import TapeScrub
 from .titles import section_title
 from .clips_panel import ClipsPanel
 from .editor import ClipEditor
-from .model import INVALID_HELP_TEXT, Clip, Project
+from .model import INVALID_HELP_TEXT, Clip, Project, default_bool_labels
 from .player import Player, VideoWidget
 from .transcript import Transcript, TranscriptArea, TranscriptJob, TranscriptPanel, parse_srt
 
@@ -330,6 +330,7 @@ class MainWindow(QMainWindow):
         self.set_playhead_motion(QSettings("snapper", "snapper").value("playhead/motion", "smooth"), save=False)
         g = m.addMenu("T&ags")
         self._action(g, "Add tag type…", self.add_tag_type)
+        self._action(g, "Yes/No labels…", self.edit_bool_labels)
         a = m.addMenu("&Audio")
         self.act_isolate = self._action(a, "Generate processed audio using audio-separator", self.start_isolation)
         self.act_custom_audio = self._action(a, "Import custom processed audio…", self.load_custom_audio)
@@ -1379,6 +1380,49 @@ class MainWindow(QMainWindow):
                 self.project.add_tag_type(tag, kind.currentData())
                 return
             QMessageBox.warning(self, "Add tag type", problem)
+
+    def edit_bool_labels(self):
+        tags = [t for t in self.project.tag_types if self.project.tag_kinds.get(t) == "bool"]
+        if not tags:
+            QMessageBox.information(self, "Yes/No labels", "There are no Yes/No tags yet. Add one with Tags ▸ Add tag type…")
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Yes/No labels")
+        pick = QComboBox()
+        for t in tags:
+            pick.addItem(t, t)
+        yes, no = QLineEdit(), QLineEdit()
+        for e in (yes, no):
+            e.setValidator(QRegularExpressionValidator(QRegularExpression(VALID_INPUT_PATTERN)))
+            e.setToolTip(INVALID_HELP)
+
+        def fill(*_):
+            t = pick.currentData()
+            (y, n), (dy, dn) = self.project.bool_labels(t), default_bool_labels(t)
+            yes.setText(y)
+            no.setText(n)
+            yes.setPlaceholderText(dy)
+            no.setPlaceholderText(dn)
+        pick.currentIndexChanged.connect(fill)
+        fill()
+        note = QLabel("These words stand for the tag in the library, in file and folder names and in the exported files. "
+                      "Leave one empty to use its default.")
+        note.setWordWrap(True)
+        note.setStyleSheet("color: gray;")
+        form = QFormLayout(dlg)
+        form.addRow("Tag", pick)
+        form.addRow("Yes is called", yes)
+        form.addRow("No is called", no)
+        form.addRow(note)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        form.addRow(buttons)
+        while dlg.exec():
+            problem = self.project.set_bool_labels(pick.currentData(), yes.text(), no.text())
+            if problem is None:
+                return
+            QMessageBox.warning(self, "Yes/No labels", problem)
 
     def rename_value(self, tag: str):
         vals = self.project.values(tag)
