@@ -53,7 +53,7 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
       - name: Build cache
-        uses: actions/cache@v4.2.3
+        uses: actions/cache@v6.1.0
         with:
           path: flatpak/.flatpak-builder
           key: flatpak-${{ hashFiles('flatpak/io.github.Lewin225.Snapper.yml') }}-${{ github.sha }}
